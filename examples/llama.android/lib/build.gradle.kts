@@ -44,7 +44,7 @@ android {
     externalNativeBuild {
         cmake {
             path("src/main/cpp/CMakeLists.txt")
-            version = "3.31.6"
+            version = "3.22.1"  // 使用 Android SDK 自带的 CMake 版本
         }
     }
     compileOptions {

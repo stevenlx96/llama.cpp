@@ -32,6 +32,9 @@ android {
                 arguments += "-DGGML_BACKEND_DL=ON"
                 arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
+
+                // 🚀 启用 Vulkan GPU 加速（适用于三星 S25 等 Android 设备）
+                arguments += "-DGGML_VULKAN=ON"
             }
         }
         aarMetadata {

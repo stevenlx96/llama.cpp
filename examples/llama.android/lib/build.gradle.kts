@@ -7,7 +7,7 @@ android {
     namespace = "com.arm.aichat"
     compileSdk = 36
 
-    ndkVersion = "29.0.13113456"
+    // ndkVersion = "29.0.13113456"  // 注释掉，使用默认 NDK 版本
 
     defaultConfig {
         minSdk = 33

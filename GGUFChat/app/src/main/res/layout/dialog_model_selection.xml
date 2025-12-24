@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="选择要下载的模型"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <RadioGroup
+        android:id="@+id/modelRadioGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/model1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Qwen2.5 1.5B Chat (~1GB)"
+            android:layout_marginBottom="12dp"
+            android:checked="true" />
+
+        <RadioButton
+            android:id="@+id/model2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Qwen2.5 3B Chat (~1.8GB)"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/model3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Qwen2 7B Chat (~4GB)"
+            android:layout_marginBottom="12dp" />
+    </RadioGroup>
+
+</LinearLayout>

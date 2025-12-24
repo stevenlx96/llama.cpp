@@ -1,0 +1,646 @@
+#include <jni.h>
+#include <string>
+#include <vector>
+#include <android/log.h>
+#include "llama.h"
+
+#define TAG "LlamaJNI"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+struct llama_android_context {
+    llama_model* model;
+    llama_context* ctx;
+};
+
+// Global variables to store Java callback (only used for streaming)
+thread_local JNIEnv* g_env = nullptr;
+thread_local jobject g_callback_obj = nullptr;
+thread_local jmethodID g_callback_method = nullptr;
+
+// CRITICAL FIX: Validate UTF-8 encoding to prevent JNI crashes
+bool is_valid_utf8(const char* data, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)data[i];
+        if (c < 0x80) {
+            i += 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= len) return false;
+            unsigned char c2 = (unsigned char)data[i + 1];
+            if ((c2 & 0xC0) != 0x80) return false;
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= len) return false;
+            unsigned char c2 = (unsigned char)data[i + 1];
+            unsigned char c3 = (unsigned char)data[i + 2];
+            if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) return false;
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= len) return false;
+            unsigned char c2 = (unsigned char)data[i + 1];
+            unsigned char c3 = (unsigned char)data[i + 2];
+            unsigned char c4 = (unsigned char)data[i + 3];
+            if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80 || (c4 & 0xC0) != 0x80) return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Find last complete UTF-8 character boundary
+// This function finds the longest valid UTF-8 prefix in the given data.
+size_t find_utf8_boundary(const char* data, size_t len) {
+    if (len == 0) return 0;
+    size_t boundary = 0;
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)data[i];
+        size_t char_len = 0;
+
+        if (c < 0x80) {
+            char_len = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            char_len = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            char_len = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            char_len = 4;
+        } else {
+            // Invalid lead byte, stop here.
+            return boundary;
+        }
+
+        if (i + char_len > len) {
+            // Not enough bytes left for a full character, stop here.
+            return boundary;
+        }
+
+        // Check continuation bytes for 2, 3, and 4-byte sequences
+        bool valid = true;
+        for (size_t j = 1; j < char_len; j++) {
+            if (((unsigned char)data[i + j] & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+        }
+
+        if (valid) {
+            boundary = i + char_len;
+            i += char_len;
+        } else {
+            // Invalid continuation byte sequence, stop here.
+            return boundary;
+        }
+    }
+    return boundary;
+}
+
+// Callback function - called when C++ generates a token (only for streaming)
+// MODIFIED: Simplified token_callback - the UTF-8 safety check is now in nativeCompletionStreaming.
+void token_callback(const std::string& token) {
+    if (g_env && g_callback_obj && g_callback_method) {
+        if (token.empty()) {
+            return;
+        }
+
+        jstring jtoken = g_env->NewStringUTF(token.c_str());
+        if (!jtoken) {
+            LOGE("token_callback: Failed to create jstring");
+            return;
+        }
+
+        // Call Java callback
+        g_env->CallVoidMethod(g_callback_obj, g_callback_method, jtoken);
+
+        // Check for exceptions
+        if (g_env->ExceptionCheck()) {
+            LOGE("token_callback: Exception in Java callback");
+            g_env->ExceptionClear();
+        }
+
+        g_env->DeleteLocalRef(jtoken);
+    } else {
+        LOGE("token_callback: callback not set");
+    }
+}
+
+extern "C" {
+
+JNIEXPORT jlong JNICALL
+Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads) {
+
+    const char* path = env->GetStringUTFChars(modelPath, nullptr);
+    LOGD("Loading model from: %s", path);
+    LOGD("Using %d threads", nThreads);
+
+    llama_backend_init();
+
+    llama_model_params model_params = llama_model_default_params();
+    llama_model* model = llama_model_load_from_file(path, model_params);
+
+    env->ReleaseStringUTFChars(modelPath, path);
+
+    if (!model) {
+        LOGE("Failed to load model");
+        return 0;
+    }
+
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+    int32_t n_vocab = llama_vocab_n_tokens(vocab);
+    LOGD("Model loaded, vocab size: %d", n_vocab);
+
+    llama_context_params ctx_params = llama_context_default_params();
+    ctx_params.n_ctx = 2048;
+    ctx_params.n_threads = nThreads;
+    ctx_params.n_threads_batch = nThreads;
+
+    llama_context* ctx = llama_init_from_model(model, ctx_params);
+
+    if (!ctx) {
+        LOGE("Failed to create context");
+        llama_model_free(model);
+        return 0;
+    }
+
+    llama_android_context* android_ctx = new llama_android_context();
+    android_ctx->model = model;
+    android_ctx->ctx = ctx;
+
+    LOGD("Model loaded successfully, context created");
+    return reinterpret_cast<jlong>(android_ctx);
+}
+
+bool should_stop_generation(const std::string& generated_text, int token_count) {
+    // Stop if too many tokens generated
+    if (token_count > 256) {
+        LOGD("Stopping: reached max reasonable tokens (%d)", token_count);
+        return true;
+    }
+
+    // Stop if end marker found
+    if (generated_text.find("<|im_end|>") != std::string::npos) {
+        LOGD("Stopping: found end token marker");
+        return true;
+    }
+
+    // Stop if new role marker found (except at beginning)
+    size_t first_marker = generated_text.find("<|im_start|>");
+    if (first_marker != std::string::npos && first_marker > 10) {
+        LOGD("Stopping: found new role marker");
+        return true;
+    }
+
+    // Check for complete Chinese sentence
+    if (token_count > 50 && generated_text.length() > 0) {
+        // Check for Chinese period (UTF-8: 0xE3 0x80 0x82)
+        if (generated_text.length() >= 3) {
+            std::string last_three = generated_text.substr(generated_text.length() - 3);
+            if (last_three == "\xe3\x80\x82") {
+                if (token_count < 100) {
+                    LOGD("Stopping: short complete response at %d tokens", token_count);
+                    return true;
+                }
+            }
+        }
+
+        // Check for ASCII punctuation
+        char last_char = generated_text.back();
+        if (last_char == '.' || last_char == '!' || last_char == '?' || last_char == '\n') {
+            if (token_count < 100) {
+                LOGD("Stopping: short complete response at %d tokens", token_count);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// ============================================================================
+// FUNCTION 1: Static (non-streaming) completion (NO CHANGES)
+// ============================================================================
+JNIEXPORT jstring JNICALL
+Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
+        JNIEnv* env, jobject thiz,
+        jlong contextPtr,
+        jstring prompt,
+        jint nPredict,
+        jfloat temperature,
+        jfloat topP,
+        jint topK) {
+
+    llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
+    if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
+        LOGE("Invalid context");
+        return env->NewStringUTF("Error: Invalid context");
+    }
+
+    const char* prompt_text = env->GetStringUTFChars(prompt, nullptr);
+    LOGD("Generating static completion for prompt (length: %zu)", strlen(prompt_text));
+
+    llama_context* ctx = android_ctx->ctx;
+    llama_model* model = android_ctx->model;
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+
+// Clear KV cache
+    llama_memory_seq_rm(llama_get_memory(ctx), -1, 0, -1);
+    LOGD("KV Cache cleared");
+
+// Create sampler chain
+    llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(topK));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(topP, 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+
+    LOGD("Sampler created with temp: %.2f, top_p: %.2f, top_k: %d", temperature, topP, topK);
+
+// Tokenize prompt
+    std::vector<llama_token> tokens;
+    int max_tokens = strlen(prompt_text) + 32;
+    tokens.resize(max_tokens);
+
+    int n_tokens = llama_tokenize(
+            vocab,
+            prompt_text,
+            strlen(prompt_text),
+            tokens.data(),
+            tokens.size(),
+            true,
+            false
+    );
+
+    if (n_tokens < 0) {
+        LOGD("Tokenization failed, trying with larger buffer");
+        tokens.resize(-n_tokens);
+        n_tokens = llama_tokenize(
+                vocab,
+                prompt_text,
+                strlen(prompt_text),
+                tokens.data(),
+                tokens.size(),
+                true,
+                false
+        );
+        if (n_tokens < 0) {
+            env->ReleaseStringUTFChars(prompt, prompt_text);
+            llama_sampler_free(sampler);
+            return env->NewStringUTF("Error: Tokenization failed");
+        }
+    }
+
+    tokens.resize(n_tokens);
+    env->ReleaseStringUTFChars(prompt, prompt_text);
+
+    LOGD("Tokenized to %d tokens", n_tokens);
+
+// Process prompt
+    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+
+    if (llama_decode(ctx, batch) != 0) {
+        LOGE("Failed to decode prompt");
+        llama_sampler_free(sampler);
+        return env->NewStringUTF("Error: Failed to decode prompt");
+    }
+
+    LOGD("Prompt decoded, starting static generation");
+
+    std::string result;
+    result.reserve(nPredict * 4);
+
+    int generation_token_count = 0;
+    const std::string end_marker = "<|im_end|>";
+    bool found_end = false;
+
+// Generation loop - no streaming, just collect all tokens
+    for (int i = 0; i < nPredict; i++) {
+        llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
+
+// Check if end of generation
+        if (llama_vocab_is_eog(vocab, new_token)) {
+            LOGD("End of generation at token %d", i);
+            break;
+        }
+
+// Convert token to text
+        char buf[256];
+        int n = llama_token_to_piece(
+                vocab,
+                new_token,
+                buf,
+                sizeof(buf),
+                0,
+                false
+        );
+
+        if (n > 0) {
+            result.append(buf, n);
+            generation_token_count++;
+
+// Check if we hit end marker
+            size_t marker_pos = result.find(end_marker);
+            if (marker_pos != std::string::npos) {
+                LOGD("Found end marker at pos %zu, truncating", marker_pos);
+                result = result.substr(0, marker_pos);
+                found_end = true;
+                break;
+            }
+        }
+
+// Check if should stop generation (only if we haven't found end marker)
+        if (!found_end && should_stop_generation(result, generation_token_count)) {
+            LOGD("Stopping generation early at token %d", i);
+            break;
+        }
+
+// Decode next token
+        if (!found_end) {
+            batch = llama_batch_get_one(&new_token, 1);
+            if (llama_decode(ctx, batch) != 0) {
+                LOGE("Failed to decode token %d", i);
+                break;
+            }
+
+            llama_sampler_accept(sampler, new_token);
+        }
+    }
+
+    llama_sampler_free(sampler);
+
+    LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
+    LOGD("Final static result: '%s'", result.c_str());
+    return env->NewStringUTF(result.c_str());
+}
+
+// ============================================================================
+// FUNCTION 2: Streaming completion with token callback (MODIFIED)
+// This version uses a buffer to accumulate split UTF-8 tokens before sending.
+// ============================================================================
+JNIEXPORT jstring JNICALL
+Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
+        JNIEnv* env, jobject thiz,
+        jlong contextPtr,
+        jstring prompt,
+        jint nPredict,
+        jfloat temperature,
+        jfloat topP,
+        jint topK,
+        jobject tokenCallback) {
+
+    llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
+    if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
+        LOGE("Invalid context");
+        return env->NewStringUTF("Error: Invalid context");
+    }
+
+// Get callback method ID
+    jclass callback_class = env->GetObjectClass(tokenCallback);
+    jmethodID callback_method = env->GetMethodID(callback_class, "onToken", "(Ljava/lang/String;)V");
+    if (!callback_method) {
+        LOGE("Failed to find onToken method");
+        env->DeleteLocalRef(callback_class);
+        return env->NewStringUTF("Error: Callback method not found");
+    }
+
+// Store global callback info (thread-local)
+    g_env = env;
+    g_callback_obj = env->NewGlobalRef(tokenCallback);
+    g_callback_method = callback_method;
+
+    const char* prompt_text = env->GetStringUTFChars(prompt, nullptr);
+    LOGD("Generating streaming completion for prompt (length: %zu)", strlen(prompt_text));
+
+    llama_context* ctx = android_ctx->ctx;
+    llama_model* model = android_ctx->model;
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+
+// Clear KV cache
+    llama_memory_seq_rm(llama_get_memory(ctx), -1, 0, -1);
+    LOGD("KV Cache cleared");
+
+// Create sampler chain
+    llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(topK));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(topP, 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+
+    LOGD("Sampler created with temp: %.2f, top_p: %.2f, top_k: %d", temperature, topP, topK);
+
+// Tokenize prompt
+    std::vector<llama_token> tokens;
+    int max_tokens = strlen(prompt_text) + 32;
+    tokens.resize(max_tokens);
+
+    int n_tokens = llama_tokenize(
+            vocab,
+            prompt_text,
+            strlen(prompt_text),
+            tokens.data(),
+            tokens.size(),
+            true,
+            false
+    );
+
+    if (n_tokens < 0) {
+        LOGD("Tokenization failed, trying with larger buffer");
+        tokens.resize(-n_tokens);
+        n_tokens = llama_tokenize(
+                vocab,
+                prompt_text,
+                strlen(prompt_text),
+                tokens.data(),
+                tokens.size(),
+                true,
+                false
+        );
+        if (n_tokens < 0) {
+            env->ReleaseStringUTFChars(prompt, prompt_text);
+            llama_sampler_free(sampler);
+            env->DeleteGlobalRef(g_callback_obj);
+            return env->NewStringUTF("Error: Tokenization failed");
+        }
+    }
+
+    tokens.resize(n_tokens);
+    env->ReleaseStringUTFChars(prompt, prompt_text);
+
+    LOGD("Tokenized to %d tokens", n_tokens);
+
+// Process prompt
+    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+
+    if (llama_decode(ctx, batch) != 0) {
+        LOGE("Failed to decode prompt");
+        llama_sampler_free(sampler);
+        env->DeleteGlobalRef(g_callback_obj);
+        return env->NewStringUTF("Error: Failed to decode prompt");
+    }
+
+    LOGD("Prompt decoded, starting streaming generation");
+
+    std::string total_generated_text; // To store the complete result for final checks/return
+    total_generated_text.reserve(nPredict * 4);
+
+    // This buffer accumulates token pieces, especially for split UTF-8 characters and end markers.
+    std::string pending_token_buffer;
+    int generation_token_count = 0;
+
+// Generation loop - stream tokens as they are generated
+    const std::string end_marker = "<|im_end|>";
+    bool found_end = false;
+
+    for (int i = 0; i < nPredict; i++) {
+        llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
+
+// Check if end of generation
+        if (llama_vocab_is_eog(vocab, new_token)) {
+            LOGD("End of generation at token %d", i);
+            break;
+        }
+
+// Convert token to text
+        char buf[256];
+        int n = llama_token_to_piece(
+                vocab,
+                new_token,
+                buf,
+                sizeof(buf),
+                0,
+                false
+        );
+
+        if (n > 0) {
+            std::string token_str(buf, n);
+
+// Add token to the pending buffer
+            pending_token_buffer.append(token_str);
+            total_generated_text.append(token_str); // Keep track of the full output
+            generation_token_count++;
+
+// --- UTF-8 and End Marker Handling ---
+
+            // 1. Check for end marker in the accumulated buffer
+            size_t marker_pos = pending_token_buffer.find(end_marker);
+            if (marker_pos != std::string::npos) {
+                LOGD("Found end marker at buffer pos %zu, stopping", marker_pos);
+
+                // Send content before marker
+                std::string before_marker = pending_token_buffer.substr(0, marker_pos);
+                if (!before_marker.empty()) {
+                    LOGD("Sending content before marker: '%s'", before_marker.c_str());
+                    token_callback(before_marker);
+                }
+
+                found_end = true;
+                break;
+            }
+
+            // 2. Determine how much of the buffer is a complete, valid UTF-8 sequence
+            size_t boundary = find_utf8_boundary(pending_token_buffer.c_str(), pending_token_buffer.length());
+
+            // 3. Send the complete part if applicable
+            if (boundary > 0) {
+                // Check if the tail (incomplete part) might be the start of the end_marker
+                std::string complete_part = pending_token_buffer.substr(0, boundary);
+                std::string tail = pending_token_buffer.substr(boundary);
+
+                bool is_marker_prefix = false;
+                if (!tail.empty()) {
+                    for (size_t j = 1; j < end_marker.length(); j++) {
+                        if (tail == end_marker.substr(0, tail.length())) {
+                            is_marker_prefix = true;
+                            LOGD("Tail matches %zu-char prefix of marker, holding full token.", j);
+                            break;
+                        }
+                    }
+                } else {
+                    // Check if the WHOLE token is a marker prefix (e.g. "<")
+                    for (size_t j = 1; j < end_marker.length(); j++) {
+                        if (complete_part == end_marker.substr(0, complete_part.length())) {
+                            is_marker_prefix = true;
+                            LOGD("Full token matches %zu-char prefix of marker, holding.", j);
+                            break;
+                        }
+                    }
+                }
+
+                if (!is_marker_prefix) {
+                    // If it's a complete UTF-8 sequence and not a prefix of the end marker, stream it out.
+                    LOGD("Sending complete part: '%s'", complete_part.c_str());
+                    token_callback(complete_part);
+                    pending_token_buffer = tail; // Keep the tail (which is incomplete UTF-8 or empty)
+                }
+            }
+        }
+
+// Only continue decoding if we haven't found end marker
+        if (!found_end) {
+// Decode next token
+            batch = llama_batch_get_one(&new_token, 1);
+            if (llama_decode(ctx, batch) != 0) {
+                LOGE("Failed to decode token %d", i);
+                break;
+            }
+
+            llama_sampler_accept(sampler, new_token);
+        }
+    }
+
+// Flush remaining buffer (any remaining complete text or valid marker prefix)
+    if (!pending_token_buffer.empty()) {
+        size_t marker_pos = pending_token_buffer.find(end_marker);
+
+        if (marker_pos != std::string::npos) {
+            // Only send content before the marker, and truncate total_generated_text
+            std::string before_marker = pending_token_buffer.substr(0, marker_pos);
+            if (!before_marker.empty()) {
+                LOGD("Final flush buffer before marker: '%s'", before_marker.c_str());
+                token_callback(before_marker);
+            }
+        } else {
+            // Send whatever is left (e.g., a final sentence or punctuation)
+            LOGD("Final flush buffer: '%s'", pending_token_buffer.c_str());
+            token_callback(pending_token_buffer);
+        }
+    }
+
+    llama_sampler_free(sampler);
+
+    LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);
+
+// Clean up global callback
+    env->DeleteGlobalRef(g_callback_obj);
+    g_env = nullptr;
+    g_callback_obj = nullptr;
+    g_callback_method = nullptr;
+
+    // Return the total generated text (or a placeholder)
+    return env->NewStringUTF(total_generated_text.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
+        JNIEnv* env, jobject thiz, jlong contextPtr) {
+
+    llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
+    if (android_ctx) {
+        if (android_ctx->ctx) {
+            llama_free(android_ctx->ctx);
+            LOGD("Context freed");
+        }
+        if (android_ctx->model) {
+            llama_model_free(android_ctx->model);
+            LOGD("Model freed");
+        }
+        delete android_ctx;
+    }
+
+    llama_backend_free();
+}
+
+}  // extern "C"

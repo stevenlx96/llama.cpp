@@ -17,10 +17,12 @@ CMAKE_VERSION="3.22.1"  # 修改为你的CMake版本
 # ============ 自动配置 ============
 export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
 CMAKE_BIN="$ANDROID_SDK_ROOT/cmake/$CMAKE_VERSION/bin/cmake"
+NINJA_BIN="$ANDROID_SDK_ROOT/cmake/$CMAKE_VERSION/bin/ninja"
 
 # 转换为MINGW路径格式
 ANDROID_NDK=$(cygpath -u "$ANDROID_NDK" 2>/dev/null || echo "$ANDROID_NDK")
 CMAKE_BIN=$(cygpath -u "$CMAKE_BIN" 2>/dev/null || echo "$CMAKE_BIN")
+NINJA_BIN=$(cygpath -u "$NINJA_BIN" 2>/dev/null || echo "$NINJA_BIN")
 
 # 颜色
 RED='\033[0;31m'
@@ -34,6 +36,7 @@ echo "配置信息："
 echo "  Android SDK: $ANDROID_SDK_ROOT"
 echo "  NDK路径: $ANDROID_NDK"
 echo "  CMake路径: $CMAKE_BIN"
+echo "  Ninja路径: $NINJA_BIN"
 echo ""
 
 # ============ 检查依赖 ============
@@ -59,7 +62,17 @@ if [ ! -f "$CMAKE_BIN" ]; then
     echo "2. Tools -> SDK Manager -> SDK Tools"
     echo "3. 安装 CMake"
     echo "4. 记下安装的版本号"
-    echo "5. 修改本脚本第12行的CMAKE_VERSION变量"
+    echo "5. 修改本脚本第15行的CMAKE_VERSION变量"
+    exit 1
+fi
+
+if [ ! -f "$NINJA_BIN" ]; then
+    echo -e "${RED}错误: Ninja不存在: $NINJA_BIN${NC}"
+    echo ""
+    echo "Ninja通常和CMake一起安装，请检查："
+    echo "  $ANDROID_SDK_ROOT/cmake/$CMAKE_VERSION/bin/"
+    echo ""
+    echo "如果确实没有ninja，尝试重新安装CMake"
     exit 1
 fi
 
@@ -88,6 +101,7 @@ echo -e "${YELLOW}配置CMake...${NC}"
   -DANDROID_ABI="$ABI" \
   -DANDROID_PLATFORM=android-26 \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_MAKE_PROGRAM="$NINJA_BIN" \
   -DBUILD_SHARED_LIBS=ON \
   -DGGML_VULKAN=ON \
   -DGGML_BACKEND_DL=ON \
@@ -97,7 +111,7 @@ echo -e "${YELLOW}配置CMake...${NC}"
   -DGGML_LLAMAFILE=OFF \
   -DLLAMA_BUILD_COMMON=ON \
   -DLLAMA_CURL=OFF \
-  -G "Unix Makefiles"
+  -G Ninja
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}CMake配置失败！${NC}"

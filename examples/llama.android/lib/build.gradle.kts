@@ -32,6 +32,15 @@ android {
                 arguments += "-DGGML_BACKEND_DL=ON"
                 arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
+
+                // Enable Vulkan GPU acceleration
+                arguments += "-DGGML_VULKAN=ON"
+                arguments += "-DGGML_CPU_KLEIDIAI=OFF"
+
+                // Set Ninja path for host compiler (needed for Vulkan shader compilation on Windows)
+                val androidSdkDir = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "E:/android/android_sdk"
+                val ninjaPath = "$androidSdkDir/cmake/3.31.6/bin/ninja.exe"
+                targets("ai-chat")
             }
         }
         aarMetadata {

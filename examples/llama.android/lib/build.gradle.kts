@@ -37,9 +37,6 @@ android {
                 arguments += "-DGGML_VULKAN=ON"
                 arguments += "-DGGML_CPU_KLEIDIAI=OFF"
 
-                // Set Ninja path for host compiler (needed for Vulkan shader compilation on Windows)
-                val androidSdkDir = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "E:/android/android_sdk"
-                val ninjaPath = "$androidSdkDir/cmake/3.31.6/bin/ninja.exe"
                 targets("ai-chat")
             }
         }
@@ -54,15 +51,11 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlin {
-        jvmToolchain(17)
-
-        compileOptions {
-            targetCompatibility = JavaVersion.VERSION_17
-        }
+    kotlinOptions {
+        jvmTarget = "21"
     }
 
     packaging {

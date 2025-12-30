@@ -30,12 +30,14 @@ android {
 
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_BACKEND_DL=ON"
-                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
 
                 // Enable Vulkan GPU acceleration
                 arguments += "-DGGML_VULKAN=ON"
+
+                // Disable KleidiAI and CPU variants to avoid network download issues
                 arguments += "-DGGML_CPU_KLEIDIAI=OFF"
+                arguments += "-DGGML_CPU_ALL_VARIANTS=OFF"
 
                 targets("ai-chat")
             }

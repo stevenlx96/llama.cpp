@@ -144,6 +144,26 @@ if (Vulkan_FOUND)
     if (CMAKE_CROSSCOMPILING)
         list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE})
         message(STATUS "vulkan-shaders-gen toolchain file: ${HOST_CMAKE_TOOLCHAIN_FILE}")
+
+        # Explicitly set Ninja path for Windows cross-compilation
+        if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+            if (DEFINED ENV{ANDROID_HOME})
+                set(NINJA_PATH "$ENV{ANDROID_HOME}/cmake/3.31.6/bin/ninja.exe")
+            elseif (DEFINED ENV{ANDROID_SDK_ROOT})
+                set(NINJA_PATH "$ENV{ANDROID_SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
+            elseif (DEFINED ENV{ANDROID_NDK_HOME})
+                # Fallback: try to find CMake in NDK's parent SDK
+                get_filename_component(SDK_ROOT "$ENV{ANDROID_NDK_HOME}/.." ABSOLUTE)
+                set(NINJA_PATH "${SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
+            endif()
+
+            if (NINJA_PATH AND EXISTS ${NINJA_PATH})
+                list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${NINJA_PATH})
+                message(STATUS "Using Ninja for shader compilation: ${NINJA_PATH}")
+            else()
+                message(WARNING "Ninja executable not found. Shader compilation may fail. Looked for: ${NINJA_PATH}")
+            endif()
+        endif()
     endif()
 
     ExternalProject_Add(

@@ -145,23 +145,27 @@ if (Vulkan_FOUND)
         list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE})
         message(STATUS "vulkan-shaders-gen toolchain file: ${HOST_CMAKE_TOOLCHAIN_FILE}")
 
-        # Explicitly set Ninja path for Windows cross-compilation
-        if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+        # Pass Ninja path to shader compilation subproject
+        # First check if CMAKE_MAKE_PROGRAM is already set (from parent CMake)
+        if (CMAKE_MAKE_PROGRAM)
+            list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM})
+            message(STATUS "Using Ninja from parent CMake for shader compilation: ${CMAKE_MAKE_PROGRAM}")
+        elseif (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+            # Fallback: try to detect Ninja path from environment variables
             if (DEFINED ENV{ANDROID_HOME})
                 set(NINJA_PATH "$ENV{ANDROID_HOME}/cmake/3.31.6/bin/ninja.exe")
             elseif (DEFINED ENV{ANDROID_SDK_ROOT})
                 set(NINJA_PATH "$ENV{ANDROID_SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
             elseif (DEFINED ENV{ANDROID_NDK_HOME})
-                # Fallback: try to find CMake in NDK's parent SDK
                 get_filename_component(SDK_ROOT "$ENV{ANDROID_NDK_HOME}/.." ABSOLUTE)
                 set(NINJA_PATH "${SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
             endif()
 
             if (NINJA_PATH AND EXISTS ${NINJA_PATH})
                 list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${NINJA_PATH})
-                message(STATUS "Using Ninja for shader compilation: ${NINJA_PATH}")
+                message(STATUS "Using detected Ninja for shader compilation: ${NINJA_PATH}")
             else()
-                message(WARNING "Ninja executable not found. Shader compilation may fail. Looked for: ${NINJA_PATH}")
+                message(WARNING "Ninja executable not found. Shader compilation may fail.")
             endif()
         endif()
     endif()

@@ -35,6 +35,11 @@ android {
                 // Enable Vulkan GPU acceleration
                 arguments += "-DGGML_VULKAN=ON"
 
+                // Specify Vulkan SDK paths for cross-compilation
+                arguments += "-DVulkan_INCLUDE_DIR=C:/VulkanSDK/1.4.335.0/Include"
+                arguments += "-DVulkan_LIBRARY=C:/VulkanSDK/1.4.335.0/Lib/vulkan-1.lib"
+                arguments += "-DGLSLC_EXECUTABLE=C:/VulkanSDK/1.4.335.0/Bin/glslc.exe"
+
                 // Disable KleidiAI and CPU variants to avoid network download issues
                 arguments += "-DGGML_CPU_KLEIDIAI=OFF"
                 arguments += "-DGGML_CPU_ALL_VARIANTS=OFF"

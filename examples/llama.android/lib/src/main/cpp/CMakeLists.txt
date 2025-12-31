@@ -19,7 +19,7 @@ if(DEFINED ANDROID_ABI)
     message(STATUS "Detected Android ABI: ${ANDROID_ABI}")
     if(ANDROID_ABI STREQUAL "arm64-v8a")
         set(GGML_SYSTEM_ARCH "ARM")
-        set(GGML_CPU_KLEIDIAI ON)
+        set(GGML_CPU_KLEIDIAI OFF)
         set(GGML_OPENMP ON)
     elseif(ANDROID_ABI STREQUAL "x86_64")
         set(GGML_SYSTEM_ARCH "x86")
@@ -27,6 +27,41 @@ if(DEFINED ANDROID_ABI)
         set(GGML_OPENMP OFF)
     else()
         message(FATAL_ERROR "Unsupported ABI: ${ANDROID_ABI}")
+    endif()
+endif()
+
+# Detect Ninja for Vulkan shader compilation on Windows
+if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
+    # Try multiple paths to find Ninja
+    set(NINJA_SEARCH_PATHS "")
+
+    if (DEFINED ENV{ANDROID_HOME})
+        list(APPEND NINJA_SEARCH_PATHS "$ENV{ANDROID_HOME}/cmake/3.31.6/bin/ninja.exe")
+    endif()
+    if (DEFINED ENV{ANDROID_SDK_ROOT})
+        list(APPEND NINJA_SEARCH_PATHS "$ENV{ANDROID_SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
+    endif()
+    if (DEFINED ANDROID_NDK)
+        get_filename_component(SDK_ROOT "${ANDROID_NDK}/.." ABSOLUTE)
+        list(APPEND NINJA_SEARCH_PATHS "${SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
+    endif()
+
+    # Common installation paths as fallback
+    list(APPEND NINJA_SEARCH_PATHS
+        "C:/Android/Sdk/cmake/3.31.6/bin/ninja.exe"
+        "E:/android/android_sdk/cmake/3.31.6/bin/ninja.exe"
+    )
+
+    foreach(NINJA_PATH IN LISTS NINJA_SEARCH_PATHS)
+        if (EXISTS "${NINJA_PATH}")
+            set(CMAKE_MAKE_PROGRAM "${NINJA_PATH}" CACHE FILEPATH "Ninja executable for shader compilation" FORCE)
+            message(STATUS "Found Ninja for shader compilation: ${NINJA_PATH}")
+            break()
+        endif()
+    endforeach()
+
+    if (NOT CMAKE_MAKE_PROGRAM)
+        message(WARNING "Ninja not found in any searched paths. Shader compilation may fail.")
     endif()
 endif()
 

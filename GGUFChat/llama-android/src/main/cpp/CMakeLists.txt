@@ -39,6 +39,7 @@ endif()
 set(REQUIRED_LIBS
         "libggml-base.so"
         "libggml-cpu.so"
+        "libggml-vulkan.so"
         "libggml.so"
         "libllama.so"
 )
@@ -101,19 +102,27 @@ set_target_properties(ggml_cpu_prebuilt PROPERTIES
 )
 message(STATUS "Imported ggml_cpu_prebuilt (depends on ggml-base)")
 
-# ggml (depends on ggml-base and ggml-cpu)
+# ggml-vulkan (depends on ggml-base)
+add_library(ggml_vulkan_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_vulkan_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-vulkan.so"
+        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
+)
+message(STATUS "Imported ggml_vulkan_prebuilt (depends on ggml-base)")
+
+# ggml (depends on ggml-base, ggml-cpu, and ggml-vulkan)
 add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(ggml_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_vulkan_prebuilt"
 )
-message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu)")
+message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu, ggml-vulkan)")
 
 # llama (depends on all ggml libraries)
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_base_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_vulkan_prebuilt;ggml_base_prebuilt"
 )
 message(STATUS "Imported llama_prebuilt (depends on all ggml libraries)")
 

@@ -1,0 +1,70 @@
+========================================
+立即执行这些步骤 - 修复 Ninja 路径问题
+========================================
+
+步骤 1：拉取最新代码
+--------------------
+git pull origin claude/add-npu-support-P0vk2
+
+
+步骤 2：彻底清理缓存
+--------------------
+在 Git Bash 中运行:
+./nuclear-clean.sh
+
+或者手动执行:
+cd examples/llama.android
+rm -rf lib/.cxx lib/build .gradle/
+cd ../..
+rm -rf build/
+
+
+步骤 3：关闭并重启 Android Studio
+---------------------------------
+必须完全关闭，然后重新打开
+
+
+步骤 4：检查环境变量（PowerShell）
+-----------------------------------
+echo $env:ANDROID_HOME
+
+如果是空的，设置它:
+[System.Environment]::SetEnvironmentVariable("ANDROID_HOME", "E:\android\android_sdk", "User")
+
+然后重启 PowerShell 和 Android Studio
+
+
+步骤 5：重新编译
+-----------------
+cd E:\MyGithub\llama.cpp\examples\llama.android
+gradlew clean
+gradlew :lib:assembleRelease
+
+
+期望看到的成功标志:
+--------------------
+✅ -- Using Ninja for shader compilation: E:/android/android_sdk/cmake/3.31.6/bin/ninja.exe
+✅ [1/487] Building Vulkan shaders...
+✅ 没有 "CMake was unable to find" 错误
+✅ 没有 "-DGGML_USE_CPU_KLEIDIAI" 出现在编译命令中
+
+
+如果还是失败:
+-------------
+查看 FINAL_FIX_CN.md 文件，里面有详细的故障排除指南
+
+
+========================================
+关键变化：我做了什么修复
+========================================
+
+修改了 ggml/src/ggml-vulkan/CMakeLists.txt:
+- 直接在 CMake 主进程中读取环境变量
+- 直接传递 CMAKE_MAKE_PROGRAM 给 ExternalProject
+- 不再依赖生成的 host-toolchain.cmake 文件
+- 有多个 fallback 选项
+
+这个方法比之前更可靠，因为:
+1. 环境变量在主进程中肯定能读到
+2. 不依赖可能被缓存的生成文件
+3. 有明确的日志输出

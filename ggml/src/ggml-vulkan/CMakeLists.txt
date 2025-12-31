@@ -15,8 +15,43 @@ endif()
 
 function(detect_host_compiler)
     if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
-        find_program(HOST_C_COMPILER NAMES cl gcc clang NO_CMAKE_FIND_ROOT_PATH)
-        find_program(HOST_CXX_COMPILER NAMES cl g++ clang++ NO_CMAKE_FIND_ROOT_PATH)
+        # On Windows, prioritize MSVC (cl) or MinGW (gcc), avoid Android NDK's clang
+        # Search in Windows system paths first
+        find_program(HOST_C_COMPILER
+            NAMES cl.exe gcc.exe
+            PATHS
+                "C:/Program Files/Microsoft Visual Studio"
+                "C:/Program Files (x86)/Microsoft Visual Studio"
+                "C:/msys64/mingw64/bin"
+                "C:/MinGW/bin"
+            PATH_SUFFIXES
+                "2022/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
+                "2022/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64"
+                "2019/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
+            NO_CMAKE_FIND_ROOT_PATH
+            NO_DEFAULT_PATH
+        )
+        find_program(HOST_CXX_COMPILER
+            NAMES cl.exe g++.exe
+            PATHS
+                "C:/Program Files/Microsoft Visual Studio"
+                "C:/Program Files (x86)/Microsoft Visual Studio"
+                "C:/msys64/mingw64/bin"
+                "C:/MinGW/bin"
+            PATH_SUFFIXES
+                "2022/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
+                "2022/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64"
+                "2019/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
+            NO_CMAKE_FIND_ROOT_PATH
+            NO_DEFAULT_PATH
+        )
+        # If not found in specific paths, try system PATH but still prioritize native compilers
+        if (NOT HOST_C_COMPILER)
+            find_program(HOST_C_COMPILER NAMES cl.exe gcc.exe clang.exe NO_CMAKE_FIND_ROOT_PATH)
+        endif()
+        if (NOT HOST_CXX_COMPILER)
+            find_program(HOST_CXX_COMPILER NAMES cl.exe g++.exe clang++.exe NO_CMAKE_FIND_ROOT_PATH)
+        endif()
     else()
         find_program(HOST_C_COMPILER NAMES gcc clang NO_CMAKE_FIND_ROOT_PATH)
         find_program(HOST_CXX_COMPILER NAMES g++ clang++ NO_CMAKE_FIND_ROOT_PATH)

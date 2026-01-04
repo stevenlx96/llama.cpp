@@ -3,13 +3,10 @@
 #include <vector>
 #include <android/log.h>
 #include "llama.h"
-#include "ggml-backend.h"
-#include "ggml-hexagon.h"
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
 struct llama_android_context {
     llama_model* model;
@@ -137,84 +134,24 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads) {
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
-    LOGI("========================================");
-    LOGI("🚀 GGUFChat Hexagon NPU Initialization");
-    LOGI("========================================");
-    LOGI("Model path: %s", path);
-    LOGI("Threads: %d", nThreads);
+    LOGD("Loading model from: %s", path);
+    LOGD("Using %d threads", nThreads);
 
-    // 初始化 llama 后端
     llama_backend_init();
-    LOGI("✓ llama backend initialized");
-
-    // 检测并初始化 Hexagon NPU 后端
-    LOGI("----------------------------------------");
-    LOGI("Detecting Hexagon NPU backend...");
-
-    ggml_backend_dev_t hexagon_dev = ggml_backend_dev_by_name("HTP0");
-    if (!hexagon_dev) {
-        LOGE("❌ Hexagon NPU device 'HTP0' not found!");
-        LOGE("Available backends:");
-
-        size_t dev_count = ggml_backend_dev_count();
-        for (size_t i = 0; i < dev_count; i++) {
-            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-            if (dev) {
-                const char* dev_name = ggml_backend_dev_name(dev);
-                const char* dev_desc = ggml_backend_dev_description(dev);
-                LOGI("  [%zu] %s - %s", i, dev_name, dev_desc);
-            }
-        }
-
-        env->ReleaseStringUTFChars(modelPath, path);
-        return 0;
-    }
-
-    const char* npu_name = ggml_backend_dev_name(hexagon_dev);
-    const char* npu_desc = ggml_backend_dev_description(hexagon_dev);
-    LOGI("✓ Found Hexagon NPU: %s", npu_name);
-    LOGI("  Description: %s", npu_desc);
-
-    // 获取 NPU 内存信息
-    size_t npu_mem_free = 0, npu_mem_total = 0;
-    ggml_backend_dev_memory(hexagon_dev, &npu_mem_free, &npu_mem_total);
-    LOGI("  Memory: %.2f MB free / %.2f MB total",
-         npu_mem_free / (1024.0 * 1024.0),
-         npu_mem_total / (1024.0 * 1024.0));
-
-    // 配置模型参数，强制使用 Hexagon NPU
-    LOGI("----------------------------------------");
-    LOGI("Loading model with Hexagon NPU...");
 
     llama_model_params model_params = llama_model_default_params();
-
-    // 创建设备列表（NULL 结尾）
-    static ggml_backend_dev_t devices[2];
-    devices[0] = hexagon_dev;
-    devices[1] = nullptr;
-    model_params.devices = devices;
-
-    LOGI("Model params configured:");
-    LOGI("  - Primary device: Hexagon NPU (HTP0)");
-    LOGI("  - CPU fallback: disabled (NPU only)");
-
-    // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);
+
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
-        LOGE("❌ Failed to load model on Hexagon NPU");
+        LOGE("Failed to load model");
         return 0;
     }
 
     const llama_vocab* vocab = llama_model_get_vocab(model);
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    LOGI("✓ Model loaded successfully");
-    LOGI("  Vocab size: %d", n_vocab);
-
-    // 创建 context
-    LOGI("----------------------------------------");
-    LOGI("Creating llama context...");
+    LOGD("Model loaded, vocab size: %d", n_vocab);
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 2048;
@@ -224,23 +161,16 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 
     if (!ctx) {
-        LOGE("❌ Failed to create context");
+        LOGE("Failed to create context");
         llama_model_free(model);
         return 0;
     }
-
-    LOGI("✓ Context created");
-    LOGI("  Context size: %d tokens", ctx_params.n_ctx);
-    LOGI("  Threads: %d", ctx_params.n_threads);
 
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
 
-    LOGI("========================================");
-    LOGI("✅ Hexagon NPU initialization complete!");
-    LOGI("========================================");
-
+    LOGD("Model loaded successfully, context created");
     return reinterpret_cast<jlong>(android_ctx);
 }
 

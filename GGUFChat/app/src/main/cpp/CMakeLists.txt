@@ -114,53 +114,30 @@ set_target_properties(ggml_hexagon_prebuilt PROPERTIES
 )
 message(STATUS "Imported ggml_hexagon_prebuilt (depends on ggml-base)")
 
-# ggml-htp-v73 (Snapdragon 888, 8 Gen 1)
-add_library(ggml_htp_v73_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_htp_v73_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-htp-v73.so"
-        INTERFACE_LINK_LIBRARIES ggml_hexagon_prebuilt
-)
-message(STATUS "Imported ggml_htp_v73_prebuilt (Snapdragon 888, 8 Gen 1)")
-
-# ggml-htp-v75 (Snapdragon 8 Gen 2)
-add_library(ggml_htp_v75_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_htp_v75_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-htp-v75.so"
-        INTERFACE_LINK_LIBRARIES ggml_hexagon_prebuilt
-)
-message(STATUS "Imported ggml_htp_v75_prebuilt (Snapdragon 8 Gen 2)")
-
-# ggml-htp-v79 (Snapdragon 8 Gen 3)
-add_library(ggml_htp_v79_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_htp_v79_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-htp-v79.so"
-        INTERFACE_LINK_LIBRARIES ggml_hexagon_prebuilt
-)
-message(STATUS "Imported ggml_htp_v79_prebuilt (Snapdragon 8 Gen 3)")
-
-# ggml-htp-v81 (Snapdragon 8 Elite - Samsung S25)
-add_library(ggml_htp_v81_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_htp_v81_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-htp-v81.so"
-        INTERFACE_LINK_LIBRARIES ggml_hexagon_prebuilt
-)
-message(STATUS "Imported ggml_htp_v81_prebuilt (Snapdragon 8 Elite)")
+# HTP libraries (v73, v75, v79, v81) are NOT imported as CMake targets
+# They will be loaded dynamically by libggml-hexagon.so at runtime
+# Just verify they exist in the directory
+message(STATUS "HTP libraries will be loaded dynamically by Hexagon backend")
 
 # ggml (depends on ggml-base, ggml-cpu, and ggml-hexagon)
 add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(ggml_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_htp_v73_prebuilt;ggml_htp_v75_prebuilt;ggml_htp_v79_prebuilt;ggml_htp_v81_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt"
 )
-message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu, ggml-hexagon, all HTP versions)")
+message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu, ggml-hexagon)")
 
 # llama (depends on all ggml libraries)
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_htp_v73_prebuilt;ggml_htp_v75_prebuilt;ggml_htp_v79_prebuilt;ggml_htp_v81_prebuilt;ggml_base_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
 )
 message(STATUS "Imported llama_prebuilt (depends on all ggml libraries including Hexagon NPU)")
+
+# Note: HTP libraries (v73, v75, v79, v81) are NOT linked here!
+# They are loaded dynamically by libggml-hexagon.so at runtime.
+# Just make sure they're in the same directory as other .so files.
 
 # ============================================================================
 # SECTION 7: Link Prebuilt Libraries to JNI Wrapper

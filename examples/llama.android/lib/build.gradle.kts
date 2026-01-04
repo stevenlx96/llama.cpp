@@ -30,21 +30,8 @@ android {
 
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_BACKEND_DL=ON"
+                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
-
-                // Enable Vulkan GPU acceleration
-                arguments += "-DGGML_VULKAN=ON"
-
-                // Specify Vulkan SDK paths for cross-compilation
-                arguments += "-DVulkan_INCLUDE_DIR=C:/VulkanSDK/1.4.335.0/Include"
-                arguments += "-DVulkan_LIBRARY=C:/VulkanSDK/1.4.335.0/Lib/vulkan-1.lib"
-                arguments += "-DGLSLC_EXECUTABLE=C:/VulkanSDK/1.4.335.0/Bin/glslc.exe"
-
-                // Disable KleidiAI and CPU variants to avoid network download issues
-                arguments += "-DGGML_CPU_KLEIDIAI=OFF"
-                arguments += "-DGGML_CPU_ALL_VARIANTS=OFF"
-
-                targets("ai-chat")
             }
         }
         aarMetadata {
@@ -58,11 +45,15 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "21"
+    kotlin {
+        jvmToolchain(17)
+
+        compileOptions {
+            targetCompatibility = JavaVersion.VERSION_17
+        }
     }
 
     packaging {

@@ -15,43 +15,8 @@ endif()
 
 function(detect_host_compiler)
     if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
-        # On Windows, prioritize MSVC (cl) or MinGW (gcc), avoid Android NDK's clang
-        # Search in Windows system paths first
-        find_program(HOST_C_COMPILER
-            NAMES cl.exe gcc.exe
-            PATHS
-                "C:/Program Files/Microsoft Visual Studio"
-                "C:/Program Files (x86)/Microsoft Visual Studio"
-                "C:/msys64/mingw64/bin"
-                "C:/MinGW/bin"
-            PATH_SUFFIXES
-                "2022/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
-                "2022/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64"
-                "2019/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
-            NO_CMAKE_FIND_ROOT_PATH
-            NO_DEFAULT_PATH
-        )
-        find_program(HOST_CXX_COMPILER
-            NAMES cl.exe g++.exe
-            PATHS
-                "C:/Program Files/Microsoft Visual Studio"
-                "C:/Program Files (x86)/Microsoft Visual Studio"
-                "C:/msys64/mingw64/bin"
-                "C:/MinGW/bin"
-            PATH_SUFFIXES
-                "2022/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
-                "2022/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64"
-                "2019/Community/VC/Tools/MSVC/*/bin/Hostx64/x64"
-            NO_CMAKE_FIND_ROOT_PATH
-            NO_DEFAULT_PATH
-        )
-        # If not found in specific paths, try system PATH but still prioritize native compilers
-        if (NOT HOST_C_COMPILER)
-            find_program(HOST_C_COMPILER NAMES cl.exe gcc.exe clang.exe NO_CMAKE_FIND_ROOT_PATH)
-        endif()
-        if (NOT HOST_CXX_COMPILER)
-            find_program(HOST_CXX_COMPILER NAMES cl.exe g++.exe clang++.exe NO_CMAKE_FIND_ROOT_PATH)
-        endif()
+        find_program(HOST_C_COMPILER NAMES cl gcc clang NO_CMAKE_FIND_ROOT_PATH)
+        find_program(HOST_CXX_COMPILER NAMES cl g++ clang++ NO_CMAKE_FIND_ROOT_PATH)
     else()
         find_program(HOST_C_COMPILER NAMES gcc clang NO_CMAKE_FIND_ROOT_PATH)
         find_program(HOST_CXX_COMPILER NAMES g++ clang++ NO_CMAKE_FIND_ROOT_PATH)
@@ -179,30 +144,6 @@ if (Vulkan_FOUND)
     if (CMAKE_CROSSCOMPILING)
         list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE})
         message(STATUS "vulkan-shaders-gen toolchain file: ${HOST_CMAKE_TOOLCHAIN_FILE}")
-
-        # Pass Ninja path to shader compilation subproject
-        # First check if CMAKE_MAKE_PROGRAM is already set (from parent CMake)
-        if (CMAKE_MAKE_PROGRAM)
-            list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM})
-            message(STATUS "Using Ninja from parent CMake for shader compilation: ${CMAKE_MAKE_PROGRAM}")
-        elseif (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
-            # Fallback: try to detect Ninja path from environment variables
-            if (DEFINED ENV{ANDROID_HOME})
-                set(NINJA_PATH "$ENV{ANDROID_HOME}/cmake/3.31.6/bin/ninja.exe")
-            elseif (DEFINED ENV{ANDROID_SDK_ROOT})
-                set(NINJA_PATH "$ENV{ANDROID_SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
-            elseif (DEFINED ENV{ANDROID_NDK_HOME})
-                get_filename_component(SDK_ROOT "$ENV{ANDROID_NDK_HOME}/.." ABSOLUTE)
-                set(NINJA_PATH "${SDK_ROOT}/cmake/3.31.6/bin/ninja.exe")
-            endif()
-
-            if (NINJA_PATH AND EXISTS ${NINJA_PATH})
-                list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${NINJA_PATH})
-                message(STATUS "Using detected Ninja for shader compilation: ${NINJA_PATH}")
-            else()
-                message(WARNING "Ninja executable not found. Shader compilation may fail.")
-            endif()
-        endif()
     endif()
 
     ExternalProject_Add(

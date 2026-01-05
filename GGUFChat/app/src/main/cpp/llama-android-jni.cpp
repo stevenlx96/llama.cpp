@@ -5,11 +5,48 @@
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
+#include "ggml.h"  // For ggml_log_set
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+
+// Custom log callback to redirect ggml logs to Android logcat
+void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
+    (void) user_data;
+
+    // Map ggml log levels to Android log priorities
+    int android_priority;
+    switch (level) {
+        case GGML_LOG_LEVEL_ERROR:
+            android_priority = ANDROID_LOG_ERROR;
+            break;
+        case GGML_LOG_LEVEL_WARN:
+            android_priority = ANDROID_LOG_WARN;
+            break;
+        case GGML_LOG_LEVEL_INFO:
+            android_priority = ANDROID_LOG_INFO;
+            break;
+        case GGML_LOG_LEVEL_DEBUG:
+            android_priority = ANDROID_LOG_DEBUG;
+            break;
+        default:
+            android_priority = ANDROID_LOG_VERBOSE;
+            break;
+    }
+
+    // Remove trailing newline if present (logcat adds its own)
+    size_t len = strlen(text);
+    if (len > 0 && text[len - 1] == '\n') {
+        char * text_copy = strdup(text);
+        text_copy[len - 1] = '\0';
+        __android_log_write(android_priority, "ggml", text_copy);
+        free(text_copy);
+    } else {
+        __android_log_write(android_priority, "ggml", text);
+    }
+}
 
 struct llama_android_context {
     llama_model* model;
@@ -142,6 +179,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("========================================");
     LOGI("Model path: %s", path);
     LOGI("Threads: %d", nThreads);
+
+    // CRITICAL: Set custom log callback BEFORE llama_backend_init()
+    // This redirects all ggml logs (including Hexagon debug logs) to Android logcat
+    ggml_log_set(ggml_log_callback_android, nullptr);
+    LOGI("✓ Android logcat callback installed for ggml");
 
     // 初始化 llama 后端
     llama_backend_init();

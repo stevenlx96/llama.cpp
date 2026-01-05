@@ -41,6 +41,10 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // ⭐ Deploy HTP libraries for Hexagon NPU support
+        // This must happen BEFORE loading any models
+        HexagonHtpDeployer.deployHtpLibraries(this)
+
         val modelsDir = getExternalFilesDir("models")?.absolutePath ?: return
         modelManager = ModelManager(modelsDir)
 

@@ -36,16 +36,14 @@ if(NOT EXISTS "${INCLUDE_DIR}")
 endif()
 
 # Check prebuilt libraries
-# TEMPORARY: Hexagon NPU disabled due to HTP library access issue
-# Re-enable once we solve DSP library loading
 set(REQUIRED_LIBS
         "libggml-base.so"
         "libggml-cpu.so"
-        # "libggml-hexagon.so"  # Disabled: causes NULL device crash
-        # "libggml-htp-v73.so"  # Disabled: not accessible to DSP
-        # "libggml-htp-v75.so"
-        # "libggml-htp-v79.so"
-        # "libggml-htp-v81.so"
+        "libggml-hexagon.so"
+        "libggml-htp-v73.so"
+        "libggml-htp-v75.so"
+        "libggml-htp-v79.so"
+        "libggml-htp-v81.so"
         "libggml.so"
         "libllama.so"
 )
@@ -108,39 +106,33 @@ set_target_properties(ggml_cpu_prebuilt PROPERTIES
 )
 message(STATUS "Imported ggml_cpu_prebuilt (depends on ggml-base)")
 
-# TEMPORARY: Hexagon NPU disabled - commenting out to prevent NULL device crash
-# Re-enable once HTP library access issue is resolved
-#
-# # ggml-hexagon (depends on ggml-base)
-# add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
-# set_target_properties(ggml_hexagon_prebuilt PROPERTIES
-#         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-hexagon.so"
-#         INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-# )
-# message(STATUS "Imported ggml_hexagon_prebuilt (depends on ggml-base)")
-#
-# # HTP libraries (v73, v75, v79, v81) are NOT imported as CMake targets
-# # They will be loaded dynamically by libggml-hexagon.so at runtime
-# # Just verify they exist in the directory
-# message(STATUS "HTP libraries will be loaded dynamically by Hexagon backend")
+# ggml-hexagon (depends on ggml-base)
+add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_hexagon_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-hexagon.so"
+        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
+)
+message(STATUS "Imported ggml_hexagon_prebuilt (depends on ggml-base)")
 
-message(STATUS "Hexagon NPU backend temporarily disabled (HTP library access issue)")
+# HTP libraries (v73, v75, v79, v81) are NOT imported as CMake targets
+# They will be loaded dynamically by libggml-hexagon.so at runtime
+message(STATUS "HTP libraries will be loaded dynamically by Hexagon backend")
 
-# ggml (depends on ggml-base and ggml-cpu only, hexagon disabled)
+# ggml (depends on ggml-base, ggml-cpu, and ggml-hexagon)
 add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(ggml_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt"
 )
-message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu)")
+message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu, ggml-hexagon)")
 
-# llama (depends on all ggml libraries except hexagon)
+# llama (depends on all ggml libraries including hexagon)
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_base_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
 )
-message(STATUS "Imported llama_prebuilt (depends on ggml libraries, Hexagon NPU disabled)")
+message(STATUS "Imported llama_prebuilt (depends on all ggml libraries including Hexagon NPU)")
 
 # Note: HTP libraries (v73, v75, v79, v81) are NOT linked here!
 # They are loaded dynamically by libggml-hexagon.so at runtime.

@@ -16,18 +16,18 @@
     <!-- ⭐ 新增：网络权限（下载模型时需要）-->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- ⭐ Hexagon NPU: FastRPC 系统库声明（必需！） -->
-    <!-- libcdsprpc.so: Compute DSP RPC library (Hexagon NPU 通信) -->
-    <!-- libadsprpc.so: Audio DSP RPC library (备用) -->
-    <uses-native-library android:name="libcdsprpc.so" android:required="false" />
-    <uses-native-library android:name="libadsprpc.so" android:required="false" />
-    <!-- required="false" 表示如果设备没有这些库，应用仍可安装（fallback到CPU） -->
-
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="GGUF Chat"
         android:theme="@style/Theme.GgufChat">
+
+        <!-- ⭐ Hexagon NPU: FastRPC 系统库声明（必需！） -->
+        <!-- libcdsprpc.so: Compute DSP RPC library (Hexagon NPU 通信) -->
+        <!-- libadsprpc.so: Audio DSP RPC library (备用) -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <uses-native-library android:name="libadsprpc.so" android:required="false" />
+        <!-- required="false" 表示如果设备没有这些库，应用仍可安装（fallback到CPU） -->
 
         <activity
             android:name=".MainActivity"

@@ -2,6 +2,9 @@
 #include <string>
 #include <vector>
 #include <android/log.h>
+#include <cstdlib>
+#include <cerrno>
+#include <cstring>
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
@@ -143,7 +146,77 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("Model path: %s", path);
     LOGI("Threads: %d", nThreads);
 
+    // CRITICAL: Set ADSP_LIBRARY_PATH BEFORE llama_backend_init()
+    // This tells the DSP where to find HTP libraries
+    LOGI("----------------------------------------");
+    LOGI("Setting up ADSP_LIBRARY_PATH for Hexagon DSP...");
+
+    // Get the application's native library directory
+    jclass activityThread = env->FindClass("android/app/ActivityThread");
+    if (activityThread) {
+        jmethodID currentApplication = env->GetStaticMethodID(
+            activityThread, "currentApplication", "()Landroid/app/Application;");
+        if (currentApplication) {
+            jobject application = env->CallStaticObjectMethod(activityThread, currentApplication);
+            if (application) {
+                jclass contextClass = env->FindClass("android/content/Context");
+                jmethodID getApplicationInfo = env->GetMethodID(
+                    contextClass, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
+                jobject appInfo = env->CallObjectMethod(application, getApplicationInfo);
+
+                if (appInfo) {
+                    jclass appInfoClass = env->GetObjectClass(appInfo);
+                    jfieldID nativeLibDirField = env->GetFieldID(
+                        appInfoClass, "nativeLibraryDir", "Ljava/lang/String;");
+                    jstring nativeLibDir = (jstring)env->GetObjectField(appInfo, nativeLibDirField);
+
+                    if (nativeLibDir) {
+                        const char* libPath = env->GetStringUTFChars(nativeLibDir, nullptr);
+
+                        // Construct ADSP_LIBRARY_PATH with multiple search locations
+                        // Format: app_lib_dir:system_paths
+                        char adsp_path[1024];
+                        snprintf(adsp_path, sizeof(adsp_path),
+                            "%s:%s/cdsp:%s/rfsa/adsp:/vendor/lib/rfsa/adsp:/vendor/lib64/rfsa/adsp:/vendor/dsp/cdsp",
+                            libPath, libPath, libPath);
+
+                        LOGI("Setting ADSP_LIBRARY_PATH:");
+                        LOGI("  %s", adsp_path);
+
+                        // Set the environment variable
+                        if (setenv("ADSP_LIBRARY_PATH", adsp_path, 1) == 0) {
+                            LOGI("✓ ADSP_LIBRARY_PATH set successfully");
+                        } else {
+                            LOGE("⚠ Failed to set ADSP_LIBRARY_PATH: %s", strerror(errno));
+                        }
+
+                        // Also try LD_LIBRARY_PATH (some devices may use this)
+                        const char* existing_ld = getenv("LD_LIBRARY_PATH");
+                        char ld_path[2048];
+                        if (existing_ld) {
+                            snprintf(ld_path, sizeof(ld_path), "%s:%s", libPath, existing_ld);
+                        } else {
+                            snprintf(ld_path, sizeof(ld_path), "%s", libPath);
+                        }
+                        setenv("LD_LIBRARY_PATH", ld_path, 1);
+
+                        env->ReleaseStringUTFChars(nativeLibDir, libPath);
+                        LOGI("✓ Library paths configured for DSP access");
+                    }
+
+                    env->DeleteLocalRef(appInfo);
+                    env->DeleteLocalRef(appInfoClass);
+                }
+
+                env->DeleteLocalRef(application);
+                env->DeleteLocalRef(contextClass);
+            }
+        }
+        env->DeleteLocalRef(activityThread);
+    }
+
     // 初始化 llama 后端
+    LOGI("----------------------------------------");
     llama_backend_init();
     LOGI("✓ llama backend initialized");
 

@@ -59,9 +59,38 @@ class GGUFChatEngine {
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
-            // CRITICAL FIX: Only load llama-android
-            // CMakeLists.txt handles ALL dependency linking
-            // This is the correct and simple approach
+            // --- 核心修复：注入 NPU 搜索路径 ---
+            // 尝试通过多种方式获取 nativeLibraryDir
+            val nativeLibDir = try {
+                // 1. 如果能拿到 context 就用 context (最标准)
+                // 这里我们尝试通过类加载器找到路径，或者在后面 loadModel 时再设置
+                // 但最简单的办法是在 System.loadLibrary 之前拿到当前应用的路径
+
+                // 这种方式不需要依赖隐藏 API
+                val info = java.io.File("/proc/self/maps").takeIf { it.exists() }
+                // 实际上，更通用的做法是在 Engine 初始化时由外部传入 Context
+                // 或者直接通过反射获取当前的 Application (比 AppGlobals 安全一点点)
+                val clazz = Class.forName("android.app.ActivityThread")
+                val method = clazz.getDeclaredMethod("currentApplication")
+                val app = method.invoke(null) as? android.app.Application
+                app?.applicationContext?.applicationInfo?.nativeLibraryDir
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not resolve nativeLibDir via reflection: ${e.message}")
+                null
+            }
+
+            if (nativeLibDir != null) {
+                try {
+                    val adspPath = "$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
+                    android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
+                    android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
+                    Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to set environment variables", e)
+                }
+            }
+            // --- 修复结束 ---
+
             System.loadLibrary("llama-android")
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
 

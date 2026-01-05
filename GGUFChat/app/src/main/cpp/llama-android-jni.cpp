@@ -147,69 +147,102 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_backend_init();
     LOGI("✓ llama backend initialized");
 
-    // 检测并初始化 Hexagon NPU 后端
+    // 列出所有可用的后端设备
     LOGI("----------------------------------------");
-    LOGI("Detecting Hexagon NPU backend...");
+    LOGI("Listing available backends...");
 
-    ggml_backend_dev_t hexagon_dev = ggml_backend_dev_by_name("HTP0");
-    if (!hexagon_dev) {
-        LOGE("❌ Hexagon NPU device 'HTP0' not found!");
-        LOGE("Available backends:");
+    size_t dev_count = ggml_backend_dev_count();
+    LOGI("Total backend devices: %zu", dev_count);
 
-        size_t dev_count = ggml_backend_dev_count();
-        for (size_t i = 0; i < dev_count; i++) {
-            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-            if (dev) {
-                const char* dev_name = ggml_backend_dev_name(dev);
-                const char* dev_desc = ggml_backend_dev_description(dev);
-                LOGI("  [%zu] %s - %s", i, dev_name, dev_desc);
-            }
+    ggml_backend_dev_t hexagon_dev = nullptr;
+    ggml_backend_dev_t cpu_dev = nullptr;
+
+    // 安全地遍历所有设备，查找 Hexagon 和 CPU backend
+    for (size_t i = 0; i < dev_count; i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (!dev) {
+            LOGE("  [%zu] NULL device (skipping)", i);
+            continue;
         }
 
+        const char* dev_name = ggml_backend_dev_name(dev);
+        const char* dev_desc = ggml_backend_dev_description(dev);
+
+        if (!dev_name || !dev_desc) {
+            LOGE("  [%zu] Invalid device name/description (skipping)", i);
+            continue;
+        }
+
+        LOGI("  [%zu] %s - %s", i, dev_name, dev_desc);
+
+        // 查找 Hexagon NPU (HTP0 或包含 "Hexagon" 的设备)
+        if (strstr(dev_name, "HTP") != nullptr || strstr(dev_name, "Hexagon") != nullptr) {
+            hexagon_dev = dev;
+            LOGI("    → Found Hexagon NPU!");
+        }
+
+        // 查找 CPU backend
+        if (strstr(dev_name, "CPU") != nullptr) {
+            cpu_dev = dev;
+            LOGI("    → Found CPU backend");
+        }
+    }
+
+    // 决定使用哪个设备
+    LOGI("----------------------------------------");
+    ggml_backend_dev_t primary_dev = nullptr;
+    const char* backend_name = "Unknown";
+
+    if (hexagon_dev) {
+        primary_dev = hexagon_dev;
+        backend_name = "Hexagon NPU";
+        LOGI("✓ Using Hexagon NPU as primary device");
+
+        // 获取 NPU 内存信息
+        size_t npu_mem_free = 0, npu_mem_total = 0;
+        ggml_backend_dev_memory(hexagon_dev, &npu_mem_free, &npu_mem_total);
+        LOGI("  Memory: %.2f MB free / %.2f MB total",
+             npu_mem_free / (1024.0 * 1024.0),
+             npu_mem_total / (1024.0 * 1024.0));
+    } else if (cpu_dev) {
+        primary_dev = cpu_dev;
+        backend_name = "CPU";
+        LOGE("⚠ Hexagon NPU not available, falling back to CPU");
+        LOGE("  This is likely because HTP libraries are not accessible to DSP");
+    } else {
+        LOGE("❌ No usable backend found (neither NPU nor CPU)");
         env->ReleaseStringUTFChars(modelPath, path);
         return 0;
     }
 
-    const char* npu_name = ggml_backend_dev_name(hexagon_dev);
-    const char* npu_desc = ggml_backend_dev_description(hexagon_dev);
-    LOGI("✓ Found Hexagon NPU: %s", npu_name);
-    LOGI("  Description: %s", npu_desc);
-
-    // 获取 NPU 内存信息
-    size_t npu_mem_free = 0, npu_mem_total = 0;
-    ggml_backend_dev_memory(hexagon_dev, &npu_mem_free, &npu_mem_total);
-    LOGI("  Memory: %.2f MB free / %.2f MB total",
-         npu_mem_free / (1024.0 * 1024.0),
-         npu_mem_total / (1024.0 * 1024.0));
-
-    // 配置模型参数，强制使用 Hexagon NPU
+    // 配置模型参数
     LOGI("----------------------------------------");
-    LOGI("Loading model with Hexagon NPU...");
+    LOGI("Loading model with %s backend...", backend_name);
 
     llama_model_params model_params = llama_model_default_params();
 
     // 创建设备列表（NULL 结尾）
     static ggml_backend_dev_t devices[2];
-    devices[0] = hexagon_dev;
+    devices[0] = primary_dev;
     devices[1] = nullptr;
     model_params.devices = devices;
 
     LOGI("Model params configured:");
-    LOGI("  - Primary device: Hexagon NPU (HTP0)");
-    LOGI("  - CPU fallback: disabled (NPU only)");
+    LOGI("  - Primary device: %s", backend_name);
+    LOGI("  - CPU fallback: %s", hexagon_dev ? "disabled (NPU only)" : "N/A (using CPU)");
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
-        LOGE("❌ Failed to load model on Hexagon NPU");
+        LOGE("❌ Failed to load model on %s backend", backend_name);
         return 0;
     }
 
     const llama_vocab* vocab = llama_model_get_vocab(model);
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    LOGI("✓ Model loaded successfully");
+    LOGI("✓ Model loaded successfully on %s", backend_name);
     LOGI("  Vocab size: %d", n_vocab);
 
     // 创建 context
@@ -238,7 +271,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     android_ctx->ctx = ctx;
 
     LOGI("========================================");
-    LOGI("✅ Hexagon NPU initialization complete!");
+    LOGI("✅ Initialization complete (%s)!", backend_name);
     LOGI("========================================");
 
     return reinterpret_cast<jlong>(android_ctx);

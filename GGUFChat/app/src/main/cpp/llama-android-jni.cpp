@@ -269,8 +269,15 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     devices[1] = nullptr;
     model_params.devices = devices;
 
+    // CRITICAL FIX: Offload ALL layers to NPU/GPU!
+    // -1 means all layers (essential for good performance)
+    // Without this, only model weights are on NPU but computation stays on CPU!
+    // This was causing the 10x slowdown (CPU<->NPU data transfer overhead)
+    model_params.n_gpu_layers = -1;
+
     LOGI("Model params configured:");
     LOGI("  - Primary device: %s", backend_name);
+    LOGI("  - Offloaded layers: ALL (n_gpu_layers = -1)");
     LOGI("  - CPU fallback: %s", hexagon_dev ? "disabled (NPU only)" : "N/A (using CPU)");
 
     // 加载模型

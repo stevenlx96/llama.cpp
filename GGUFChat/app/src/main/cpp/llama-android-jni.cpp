@@ -264,34 +264,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
-    // 创建设备列表（NULL 结尾）
-    // CRITICAL: When using Hexagon NPU, must include BOTH NPU and CPU in device list!
-    // This ensures llama.cpp correctly selects HTP0-REPACK buffer type instead of CPU_REPACK
-    static ggml_backend_dev_t devices[3];
-    int dev_idx = 0;
+    // EXPERIMENT: Let llama.cpp auto-select devices instead of manual configuration
+    // Official docs use D=HTP0 parameter which lets llama.cpp auto-detect
+    // Maybe manual device list configuration is preventing HTP0-REPACK from being used?
 
-    if (hexagon_dev) {
-        // For NPU: NPU must be first (primary offload device), CPU second (fallback)
-        devices[dev_idx++] = hexagon_dev;
-        if (cpu_dev) {
-            devices[dev_idx++] = cpu_dev;
-        }
-        LOGI("Device list: HTP0 (primary), CPU (fallback)");
-    } else {
-        // For CPU-only: just CPU device
-        devices[dev_idx++] = cpu_dev;
-        LOGI("Device list: CPU only");
-    }
+    // OPTION 1: Auto device selection (llama.cpp default logic)
+    // Leave model_params.devices = NULL (default)
+    // llama.cpp will automatically discover and configure devices
 
-    devices[dev_idx] = nullptr;  // NULL terminator
-    model_params.devices = devices;
+    // OPTION 2: Manual NPU-only (no CPU in list)
+    // static ggml_backend_dev_t devices[2];
+    // if (hexagon_dev) {
+    //     devices[0] = hexagon_dev;
+    //     devices[1] = nullptr;
+    //     model_params.devices = devices;
+    //     LOGI("Device list: HTP0 only (manual)");
+    // }
 
-    // Debug: Log device list configuration
-    LOGI("Device list configured:");
-    for (int i = 0; devices[i] != nullptr; i++) {
-        const char* dev_name = ggml_backend_dev_name(devices[i]);
-        LOGI("  devices[%d] = %s", i, dev_name ? dev_name : "NULL");
-    }
+    // Using OPTION 1 for now
+    model_params.devices = nullptr;  // Let llama.cpp auto-select devices
+    LOGI("Device selection: AUTO (llama.cpp will use all available GPUs)");
 
     // CRITICAL: Enable extra buffer types for HTP0-REPACK!
     // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking

@@ -88,14 +88,12 @@ class GGUFChatEngine {
                     // EXPERIMENT: Enable Hexagon experimental features for REPACK support
                     android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
 
-                    // Enable verbose logging to debug performance issues
-                    // Need to see what NPU is actually doing - batch sizes, node counts, etc.
-                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
-                    android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
+                    // CRITICAL DEBUG: Enable ONLY scheduler debug (Hexagon verbose floods logs)
+                    // Level 1 shows split boundaries only (less spam than level 2)
+                    android.system.Os.setenv("GGML_SCHED_DEBUG", "1", true)
 
-                    // CRITICAL DEBUG: Enable scheduler debug to see why graph splits are so small
-                    // Level 2 shows detailed backend assignments for each node
-                    android.system.Os.setenv("GGML_SCHED_DEBUG", "2", true)
+                    // Disable Hexagon verbose to reduce log spam
+                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "0", true)
 
                     Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")
                     Log.d(TAG, "NPU verbose logging ENABLED for performance debugging")

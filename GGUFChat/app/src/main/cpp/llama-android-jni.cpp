@@ -330,9 +330,19 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("Creating llama context...");
 
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 2048;
+
+    // Match official Hexagon benchmark configuration for best performance
+    ctx_params.n_ctx = 8192;              // Official uses 8192 (vs our previous 2048)
+    ctx_params.n_batch = 128;             // Official uses 128 batch size (critical for NPU!)
+    ctx_params.n_ubatch = 128;            // Micro-batch size
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ON;  // Enable Flash Attention (官方用 -fa on)
+
+    LOGI("Context params (matched to official Hexagon config):");
+    LOGI("  - Context size: %d", ctx_params.n_ctx);
+    LOGI("  - Batch size: %d (critical for NPU performance!)", ctx_params.n_batch);
+    LOGI("  - Flash Attention: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

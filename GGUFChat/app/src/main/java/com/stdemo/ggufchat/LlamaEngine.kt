@@ -93,6 +93,10 @@ class GGUFChatEngine {
                     android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
                     android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
 
+                    // CRITICAL DEBUG: Enable scheduler debug to see why graph splits are so small
+                    // Level 2 shows detailed backend assignments for each node
+                    android.system.Os.setenv("GGML_SCHED_DEBUG", "2", true)
+
                     Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")
                     Log.d(TAG, "NPU verbose logging ENABLED for performance debugging")
                 } catch (e: Exception) {

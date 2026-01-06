@@ -344,19 +344,20 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ctx_params.n_ubatch = 512;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;  // Let llama.cpp decide
 
-    // CRITICAL FIX: Explicitly enable KV cache offloading to NPU!
-    // If offload_kqv=false, KV operations are FORCED to CPU, causing graph splits:
-    //   NPU op -> CPU KV op -> NPU op -> CPU KV op (2-4 nodes per split!)
-    // With offload_kqv=true, entire graph stays on NPU (100+ nodes, good performance)
+    // EXPERIMENT: Disable Flash Attention - it might use operations NPU doesn't support
+    // This could be causing the HTP0 -> CPU -> HTP0 splits
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+
+    // CRITICAL: Enable KV cache offloading to NPU
+    // offload_kqv MUST be true for NPU performance
     ctx_params.offload_kqv = true;
 
     LOGI("Context params (conservative mobile config):");
     LOGI("  - Context size: %d", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: AUTO (let llama.cpp decide)");
-    LOGI("  - KV cache offload: %s (CRITICAL for NPU performance)", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
+    LOGI("  - Flash Attention: DISABLED (testing if it causes CPU splits)");
+    LOGI("  - KV cache offload: %s", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

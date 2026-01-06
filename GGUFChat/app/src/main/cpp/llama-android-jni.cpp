@@ -337,7 +337,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ctx_params.n_ubatch = 128;            // Micro-batch size
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ON;  // Enable Flash Attention (官方用 -fa on)
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Enable Flash Attention (官方用 -fa on)
 
     LOGI("Context params (matched to official Hexagon config):");
     LOGI("  - Context size: %d", ctx_params.n_ctx);

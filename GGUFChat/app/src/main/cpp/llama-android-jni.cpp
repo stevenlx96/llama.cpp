@@ -286,6 +286,13 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     devices[dev_idx] = nullptr;  // NULL terminator
     model_params.devices = devices;
 
+    // Debug: Log device list configuration
+    LOGI("Device list configured:");
+    for (int i = 0; devices[i] != nullptr; i++) {
+        const char* dev_name = ggml_backend_dev_name(devices[i]);
+        LOGI("  devices[%d] = %s", i, dev_name ? dev_name : "NULL");
+    }
+
     // CRITICAL: Enable extra buffer types for HTP0-REPACK!
     // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
     // This is essential for NPU performance - without it, weights stay in CPU memory

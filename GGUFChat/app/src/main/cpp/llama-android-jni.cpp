@@ -5,7 +5,6 @@
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
-#include "ggml.h"  // For ggml_log_set
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -41,10 +40,10 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     if (len > 0 && text[len - 1] == '\n') {
         char * text_copy = strdup(text);
         text_copy[len - 1] = '\0';
-        __android_log_write(android_priority, "ggml", text_copy);
+        __android_log_write(android_priority, "llama.cpp", text_copy);
         free(text_copy);
     } else {
-        __android_log_write(android_priority, "ggml", text);
+        __android_log_write(android_priority, "llama.cpp", text);
     }
 }
 
@@ -181,9 +180,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("Threads: %d", nThreads);
 
     // CRITICAL: Set custom log callback BEFORE llama_backend_init()
-    // This redirects all ggml logs (including Hexagon debug logs) to Android logcat
-    ggml_log_set(ggml_log_callback_android, nullptr);
-    LOGI("✓ Android logcat callback installed for ggml");
+    // This redirects BOTH ggml AND llama logs to Android logcat
+    // Using llama_log_set() instead of ggml_log_set() ensures we capture
+    // llama's own messages including "offloaded X/Y layers to GPU"
+    llama_log_set(ggml_log_callback_android, nullptr);
+    LOGI("✓ Android logcat callback installed for ggml and llama");
 
     // 初始化 llama 后端
     llama_backend_init();

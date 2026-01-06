@@ -331,18 +331,20 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Match official Hexagon benchmark configuration for best performance
-    ctx_params.n_ctx = 8192;              // Official uses 8192 (vs our previous 2048)
-    ctx_params.n_batch = 128;             // Official uses 128 batch size (critical for NPU!)
-    ctx_params.n_ubatch = 128;            // Micro-batch size
+    // Start with conservative settings, then optimize incrementally
+    // Official config (8192 ctx, 128 batch, FA on) made it WORSE (2 tokens/s vs 10 tokens/s)
+    // Trying smaller values optimized for mobile hardware
+    ctx_params.n_ctx = 2048;              // Keep original (not 8192)
+    ctx_params.n_batch = 512;             // Default value (not 128)
+    ctx_params.n_ubatch = 512;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Enable Flash Attention (官方用 -fa on)
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;  // Let llama.cpp decide
 
-    LOGI("Context params (matched to official Hexagon config):");
+    LOGI("Context params (conservative mobile config):");
     LOGI("  - Context size: %d", ctx_params.n_ctx);
-    LOGI("  - Batch size: %d (critical for NPU performance!)", ctx_params.n_batch);
-    LOGI("  - Flash Attention: ENABLED");
+    LOGI("  - Batch size: %d", ctx_params.n_batch);
+    LOGI("  - Flash Attention: AUTO (let llama.cpp decide)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

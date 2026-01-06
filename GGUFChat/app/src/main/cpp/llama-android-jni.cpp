@@ -285,6 +285,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     model_params.devices = nullptr;  // Let llama.cpp auto-select devices
     LOGI("Device selection: AUTO (llama.cpp will use all available GPUs)");
 
+    // CRITICAL: Disable mmap (match official --no-mmap flag)
+    // Official Hexagon benchmark explicitly uses --no-mmap for best performance
+    model_params.use_mmap = false;
+    LOGI("Memory mapping: DISABLED (--no-mmap, matches official config)");
+
     // CRITICAL: Enable extra buffer types for HTP0-REPACK!
     // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
     // This is essential for NPU performance - without it, weights stay in CPU memory

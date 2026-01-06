@@ -286,6 +286,12 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     devices[dev_idx] = nullptr;  // NULL terminator
     model_params.devices = devices;
 
+    // CRITICAL: Enable extra buffer types for HTP0-REPACK!
+    // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
+    // This is essential for NPU performance - without it, weights stay in CPU memory
+    model_params.use_extra_bufts = true;
+    LOGI("Extra buffer types: ENABLED (for HTP0-REPACK weight repacking)");
+
     // CRITICAL FIX: Offload ALL layers to NPU/GPU!
     // -1 means all layers (essential for good performance)
     // Without this, only model weights are on NPU but computation stays on CPU!

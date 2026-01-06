@@ -265,9 +265,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_model_params model_params = llama_model_default_params();
 
     // 创建设备列表（NULL 结尾）
-    static ggml_backend_dev_t devices[2];
-    devices[0] = primary_dev;
-    devices[1] = nullptr;
+    // CRITICAL: When using Hexagon NPU, must include BOTH NPU and CPU in device list!
+    // This ensures llama.cpp correctly selects HTP0-REPACK buffer type instead of CPU_REPACK
+    static ggml_backend_dev_t devices[3];
+    int dev_idx = 0;
+
+    if (hexagon_dev) {
+        // For NPU: NPU must be first (primary offload device), CPU second (fallback)
+        devices[dev_idx++] = hexagon_dev;
+        if (cpu_dev) {
+            devices[dev_idx++] = cpu_dev;
+        }
+        LOGI("Device list: HTP0 (primary), CPU (fallback)");
+    } else {
+        // For CPU-only: just CPU device
+        devices[dev_idx++] = cpu_dev;
+        LOGI("Device list: CPU only");
+    }
+
+    devices[dev_idx] = nullptr;  // NULL terminator
     model_params.devices = devices;
 
     // CRITICAL FIX: Offload ALL layers to NPU/GPU!

@@ -85,6 +85,9 @@ class GGUFChatEngine {
                     android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
                     android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
 
+                    // EXPERIMENT: Enable Hexagon experimental features for REPACK support
+                    android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
+
                     // 关闭详细日志（已确认 NPU 在工作，但小批次导致性能差）
                     // android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
                     // android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)

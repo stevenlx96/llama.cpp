@@ -291,8 +291,17 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     const llama_vocab* vocab = llama_model_get_vocab(model);
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
+    int32_t n_layer = llama_model_n_layer(model);
+
     LOGI("✓ Model loaded successfully on %s", backend_name);
     LOGI("  Vocab size: %d", n_vocab);
+    LOGI("  Total layers: %d", n_layer);
+    LOGI("  Requested offload: ALL layers (n_gpu_layers = -1)");
+
+    if (hexagon_dev) {
+        LOGI("  ⚠ Note: Check logs above for 'offloaded X/%d layers' message", n_layer);
+        LOGI("  ⚠ If not all layers offloaded, NPU performance will be poor!");
+    }
 
     // 创建 context
     LOGI("----------------------------------------");

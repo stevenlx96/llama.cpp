@@ -85,12 +85,11 @@ class GGUFChatEngine {
                     android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
                     android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
 
-                    // 启用详细的 NPU 日志和性能分析
-                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
-                    android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
+                    // 关闭详细日志（已确认 NPU 在工作，但小批次导致性能差）
+                    // android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
+                    // android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
 
                     Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")
-                    Log.d(TAG, "NPU verbose logging and profiling enabled")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to set environment variables", e)
                 }

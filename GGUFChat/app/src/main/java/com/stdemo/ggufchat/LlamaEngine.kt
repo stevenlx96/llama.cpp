@@ -88,11 +88,13 @@ class GGUFChatEngine {
                     // EXPERIMENT: Enable Hexagon experimental features for REPACK support
                     android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
 
-                    // 关闭详细日志（已确认 NPU 在工作，但小批次导致性能差）
-                    // android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
-                    // android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
+                    // Enable verbose logging to debug performance issues
+                    // Need to see what NPU is actually doing - batch sizes, node counts, etc.
+                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "1", true)
+                    android.system.Os.setenv("GGML_HEXAGON_PROFILE", "1", true)
 
                     Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")
+                    Log.d(TAG, "NPU verbose logging ENABLED for performance debugging")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to set environment variables", e)
                 }

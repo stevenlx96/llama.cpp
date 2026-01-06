@@ -88,10 +88,8 @@ class GGUFChatEngine {
                     // EXPERIMENT: Enable Hexagon experimental features for REPACK support
                     android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
 
-                    // DEBUG: Level 2 to see which operations are assigned to CPU vs NPU
-                    android.system.Os.setenv("GGML_SCHED_DEBUG", "2", true)
-
-                    // Keep Hexagon verbose off - too much spam
+                    // Disable all debug logging - too much spam, can't see performance stats
+                    android.system.Os.setenv("GGML_SCHED_DEBUG", "0", true)
                     android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "0", true)
 
                     Log.d(TAG, "NPU search path successfully injected: $nativeLibDir")

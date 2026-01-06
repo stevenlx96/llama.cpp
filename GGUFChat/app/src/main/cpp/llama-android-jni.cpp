@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <android/log.h>
 #include "llama.h"
 #include "ggml-backend.h"
@@ -524,6 +525,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     const std::string end_marker = "<|im_end|>";
     bool found_end = false;
 
+    // Start timing for performance measurement
+    auto gen_start_time = std::chrono::high_resolution_clock::now();
+
 // Generation loop - no streaming, just collect all tokens
     for (int i = 0; i < nPredict; i++) {
         llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
@@ -579,8 +583,21 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
 
     llama_sampler_free(sampler);
 
+    // Calculate and log performance metrics
+    auto gen_end_time = std::chrono::high_resolution_clock::now();
+    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
+    double gen_time_sec = gen_duration.count() / 1000.0;
+    double tokens_per_sec = generation_token_count / gen_time_sec;
+
+    LOGI("========================================");
+    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("  Generated tokens: %d", generation_token_count);
+    LOGI("  Generation time: %.2f seconds", gen_time_sec);
+    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
+    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
+
     LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
-    LOGD("Final static result: '%s'", result.c_str());
     return env->NewStringUTF(result.c_str());
 }
 
@@ -697,6 +714,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     // This buffer accumulates token pieces, especially for split UTF-8 characters and end markers.
     std::string pending_token_buffer;
     int generation_token_count = 0;
+
+    // Start timing for performance measurement
+    auto gen_start_time = std::chrono::high_resolution_clock::now();
 
 // Generation loop - stream tokens as they are generated
     const std::string end_marker = "<|im_end|>";
@@ -818,6 +838,20 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     }
 
     llama_sampler_free(sampler);
+
+    // Calculate and log performance metrics
+    auto gen_end_time = std::chrono::high_resolution_clock::now();
+    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
+    double gen_time_sec = gen_duration.count() / 1000.0;
+    double tokens_per_sec = generation_token_count / gen_time_sec;
+
+    LOGI("========================================");
+    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("  Generated tokens: %d", generation_token_count);
+    LOGI("  Generation time: %.2f seconds", gen_time_sec);
+    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
+    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);
 

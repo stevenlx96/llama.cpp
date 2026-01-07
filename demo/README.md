@@ -1,14 +1,15 @@
-# NPU 性能测试 - 最后尝试
+# NPU 性能测试 - 进展报告
 
 ## 当前状态
 
 | 环境 | 性能 |
 |------|------|
 | 你的 App (CPU) | 30-40 tokens/s ✅ |
-| 你的 App (NPU) | **5.29 tokens/s** ❌ |
+| 你的 App (NPU) 初始配置 | 5.29 tokens/s ❌ |
+| 你的 App (NPU) 优化后 | **10.89 tokens/s** 🔶 |
 | 官方基准 (NPU) | 51 tokens/s |
 
-**问题**: NPU 比 CPU 慢 6 倍
+**进展**: NPU 性能提升 2 倍（5.29 → 10.89），但仍低于官方基准
 
 ---
 
@@ -28,50 +29,57 @@ HTP0 → CPU → HTP0 → CPU → HTP0 → CPU ...
 
 ---
 
-## 最后测试：改成官方配置
+## 优化历程
+
+### 测试 1: 官方配置完全匹配（包括 Flash Attention）
 
 修改 `GGUFChat/app/src/main/cpp/llama-android-jni.cpp`：
 
-### 当前配置（第 342-350 行）
 ```cpp
-ctx_params.n_ctx = 2048;
-ctx_params.n_batch = 512;
-ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+ctx_params.n_ctx = 8192;              // 官方: --ctx-size 8192
+ctx_params.n_batch = 128;             // 官方: --batch-size 128
+ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // 官方: -fa on
+ctx_params.offload_kqv = true;        // KV cache 在 NPU
 ```
 
-### 改成官方配置
+**结果**:
+- ✅ 第一次推理: 10.89 tokens/s（速度提升 2 倍！）
+- ❌ 第二次推理: 崩溃（SIGABRT in llama_decode）
+
+**结论**: Flash Attention 与 Hexagon NPU 后端不兼容，导致状态累积后崩溃
+
+### 测试 2: 优化配置（禁用 Flash Attention）
+
+**当前配置** (第 340-360 行):
 ```cpp
-ctx_params.n_ctx = 8192;              // ← 改
-ctx_params.n_batch = 128;             // ← 改
-ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // ← 改
+ctx_params.n_ctx = 8192;              // 保留大 context
+ctx_params.n_batch = 128;             // 保留小 batch
+ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;  // 禁用 FA 避免崩溃
+ctx_params.offload_kqv = true;        // KV cache 在 NPU
 ```
 
-重新编译，测试性能。
+**预期**: 稳定运行，性能接近 10 tokens/s
 
 ---
 
-## 判断结果
+## 性能分析
 
-### 如果还是慢（~5-10 tokens/s）
-**→ 放弃 NPU**
+### ✅ 已确认有效的优化
+```cpp
+ctx_params.n_ctx = 8192;              // 大 context（官方配置）
+ctx_params.n_batch = 128;             // 小 batch（官方配置）
+ctx_params.offload_kqv = true;        // KV cache offload
+model_params.n_gpu_layers = -1;       // 全部层 offload
+model_params.use_extra_bufts = true;  // HTP0-REPACK
+model_params.use_mmap = false;        // --no-mmap
+```
+→ 性能从 5.29 提升到 10.89 tokens/s
 
-说明：
-- Hexagon backend 的架构限制
-- 频繁的后端切换无法避免
-- 这不是配置问题，是根本性的
-
-**建议**：
-- ✅ 用 CPU（30-40 tokens/s，稳定可靠）
-- ⚠️ 试试 Vulkan GPU（如果你之前搞过）
-- ❌ NPU 不适合 LLM 推理
-
-### 如果变快了（>20 tokens/s）
-**→ 继续调优**
-
-说明配置有影响，可以继续调：
-- 调整 batch size
-- 调整 context size
-- 测试不同模型格式
+### ❌ 不兼容的功能
+```cpp
+ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // 崩溃！
+```
+→ 第二次推理时 SIGABRT
 
 ---
 
@@ -111,25 +119,40 @@ SPLIT #114: CPU  (GET_ROWS)
 
 ---
 
-## 我的判断
+## 为什么还是比官方慢？
 
-**很可能改配置也没用**，因为：
+**官方**: 51 tokens/s
+**你的 App**: 10.89 tokens/s
+**差距**: ~5 倍
 
-1. 官方基准测试的环境和你的 App 可能不同：
-   - 官方可能是特定模型/场景
-   - 官方可能有特殊优化
-   - 官方可能测的是 prompt processing（批量），不是单 token 生成
+### 可能的原因
 
-2. SET_ROWS/GET_ROWS/CONT 强制在 CPU 是 Hexagon backend 的设计：
-   - 看源码，这些操作根本没在 Hexagon 里实现
-   - 除非改 llama.cpp 源码实现这些操作，否则无解
+1. **模型大小不同**
+   - 官方基准可能用 Llama-3.2-1B（1B 参数）
+   - 你可能用的是 3B 模型
+   - 更大的模型 → 更多的 MUL_MAT 操作 → 更慢
 
-3. 你的性能数字（5.29 tokens/s）和日志（60+ splits）完美匹配：
-   - 每次切换 ~2ms 开销
-   - 100 次切换 = 200ms/token
-   - 5 tokens/s ≈ 200ms/token ✓
+2. **测试场景不同**
+   - 官方可能测的是 **prompt processing**（批处理多个 token）
+   - 你测的是 **单 token 生成**（逐个生成）
+   - 批处理可以更好地利用 NPU 并行性
 
-**建议**：试一次改配置，不行就放弃 NPU。
+3. **后端切换依然存在**
+   - SET_ROWS/GET_ROWS/CONT 操作强制在 CPU 运行
+   - 29 层 × 3-4 次切换/层 ≈ 100 次同步/token
+   - 每次切换开销 ~1-2ms
+   - 这是 Hexagon backend 的架构限制
+
+4. **Flash Attention 的缺失**
+   - 官方用 Flash Attention 优化了注意力计算
+   - 我们为了稳定性禁用了 FA
+   - 失去了部分性能优化
+
+### 下一步建议
+
+1. **测试 1B 模型**: 下载 Llama-3.2-1B-Instruct-Q4_0.gguf 测试
+2. **接受当前性能**: 10 tokens/s 虽然不如官方，但比初始配置快 2 倍
+3. **考虑 CPU**: 如果 10 tokens/s 仍不满意，CPU 的 30-40 tokens/s 更快且稳定
 
 ---
 

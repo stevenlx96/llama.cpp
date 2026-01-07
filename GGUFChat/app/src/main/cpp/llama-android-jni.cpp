@@ -337,25 +337,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // MATCH OFFICIAL CONFIG EXACTLY - Testing if this fixes NPU performance
-    // Official benchmark: 51 tokens/s with these params
-    // Reference: scripts/snapdragon/adb/run-completion.sh
+    // Optimized config for Hexagon NPU
+    // Based on official benchmark but with Flash Attention disabled for stability
+    // Official benchmark: 51 tokens/s with these params (scripts/snapdragon/adb/run-completion.sh)
     ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
     ctx_params.n_batch = 128;             // Official: --batch-size 128
     ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // Official uses Flash Attention ON
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    // DISABLE Flash Attention to prevent crashes with Hexagon NPU
+    // Flash Attention caused SIGABRT on second inference with NPU backend
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
     // CRITICAL: Enable KV cache offloading to NPU
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (OFFICIAL BENCHMARK CONFIG):");
-    LOGI("  - Context size: %d (official uses 8192)", ctx_params.n_ctx);
-    LOGI("  - Batch size: %d (official uses 128)", ctx_params.n_batch);
-    LOGI("  - Flash Attention: ENABLED (official uses -fa on)");
+    LOGI("Context params (OPTIMIZED FOR NPU STABILITY):");
+    LOGI("  - Context size: %d", ctx_params.n_ctx);
+    LOGI("  - Batch size: %d", ctx_params.n_batch);
+    LOGI("  - Flash Attention: DISABLED (prevents NPU crashes)");
     LOGI("  - KV cache offload: %s", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);

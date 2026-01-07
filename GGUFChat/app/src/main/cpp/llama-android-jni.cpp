@@ -337,26 +337,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Optimized config for Hexagon NPU
-    // Based on official benchmark but with Flash Attention disabled for stability
-    // Official benchmark: 51 tokens/s with these params (scripts/snapdragon/adb/run-completion.sh)
-    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
-    ctx_params.n_batch = 128;             // Official: --batch-size 128
+    // TEST: Smaller context + Flash Attention to avoid crashes
+    // Flash Attention is KEY for performance (4.61 → 10.89 tokens/s)
+    // Hypothesis: ctx=8192 + FA causes crash, try ctx=4096 + FA
+    ctx_params.n_ctx = 4096;              // Reduced from 8192 to test stability
+    ctx_params.n_batch = 128;             // Keep official batch size
     ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention to prevent crashes with Hexagon NPU
-    // Flash Attention caused SIGABRT on second inference with NPU backend
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // ENABLE Flash Attention - This is the performance key!
+    // Testing with smaller context to avoid crash
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 
     // CRITICAL: Enable KV cache offloading to NPU
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (OPTIMIZED FOR NPU STABILITY):");
-    LOGI("  - Context size: %d", ctx_params.n_ctx);
+    LOGI("Context params (TESTING: FA + smaller ctx):");
+    LOGI("  - Context size: %d (reduced to avoid FA crash)", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED (prevents NPU crashes)");
+    LOGI("  - Flash Attention: ENABLED (performance key!)");
     LOGI("  - KV cache offload: %s", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);

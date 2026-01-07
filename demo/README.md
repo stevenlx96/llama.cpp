@@ -2,14 +2,16 @@
 
 ## 当前状态
 
-| 环境 | 性能 |
-|------|------|
-| 你的 App (CPU) | 30-40 tokens/s ✅ |
-| 你的 App (NPU) 初始配置 | 5.29 tokens/s ❌ |
-| 你的 App (NPU) 优化后 | **10.89 tokens/s** 🔶 |
-| 官方基准 (NPU) | 51 tokens/s |
+| 环境 | 性能 | 稳定性 |
+|------|------|--------|
+| 你的 App (CPU) | 30-40 tokens/s | ✅ 稳定 |
+| 你的 App (NPU) 初始配置 | 5.29 tokens/s | ✅ 稳定但慢 |
+| 你的 App (NPU) FA 禁用 | 4.61 tokens/s | ✅ 稳定但更慢 |
+| 你的 App (NPU) FA 开启 (ctx=8192) | **10.89 tokens/s** | ❌ 第二次推理崩溃 |
+| **当前测试: FA 开启 (ctx=4096)** | **预计 ~10 tokens/s** | **待测试** |
+| 官方基准 (NPU) | 51 tokens/s | ✅ 稳定 |
 
-**进展**: NPU 性能提升 2 倍（5.29 → 10.89），但仍低于官方基准
+**重要发现**: **Flash Attention 是性能关键**！但 ctx=8192 会崩溃，正在测试 ctx=4096
 
 ---
 
@@ -48,9 +50,8 @@ ctx_params.offload_kqv = true;        // KV cache 在 NPU
 
 **结论**: Flash Attention 与 Hexagon NPU 后端不兼容，导致状态累积后崩溃
 
-### 测试 2: 优化配置（禁用 Flash Attention）
+### 测试 2: 禁用 Flash Attention（避免崩溃）
 
-**当前配置** (第 340-360 行):
 ```cpp
 ctx_params.n_ctx = 8192;              // 保留大 context
 ctx_params.n_batch = 128;             // 保留小 batch
@@ -58,7 +59,29 @@ ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;  // 禁用 FA 避�
 ctx_params.offload_kqv = true;        // KV cache 在 NPU
 ```
 
-**预期**: 稳定运行，性能接近 10 tokens/s
+**结果**:
+- ✅ 稳定运行，不崩溃
+- ❌ 性能暴跌：**4.61 tokens/s**（比初始还慢！）
+
+**结论**: Flash Attention 是性能的关键！不能禁用。
+
+### 测试 3: 减小 Context Size + 保留 Flash Attention（当前）
+
+**假设**: ctx=8192 太大导致 FA 在 NPU 上崩溃，尝试 ctx=4096
+
+**当前配置** (第 340-360 行):
+```cpp
+ctx_params.n_ctx = 4096;              // ← 从 8192 减到 4096
+ctx_params.n_batch = 128;             // 保持
+ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // ← 重新开启！
+ctx_params.offload_kqv = true;        // 保持
+```
+
+**预期**:
+- ✅ 性能: ~10 tokens/s（保留 FA 的加速）
+- ✅ 稳定: 不崩溃（更小的 context 避免内存问题）
+
+**如果还是崩溃**: 再试 ctx=2048
 
 ---
 

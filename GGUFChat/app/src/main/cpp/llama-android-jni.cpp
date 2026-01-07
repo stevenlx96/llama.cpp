@@ -337,27 +337,28 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // TEST: Smaller context + Flash Attention to avoid crashes
-    // Flash Attention is KEY for performance (4.61 → 10.89 tokens/s)
-    // Hypothesis: ctx=8192 + FA causes crash, try ctx=4096 + FA
-    ctx_params.n_ctx = 4096;              // Reduced from 8192 to test stability
-    ctx_params.n_batch = 128;             // Keep official batch size
-    ctx_params.n_ubatch = 128;            // Match n_batch
+    // STABILITY TEST: Disable Flash Attention
+    // FA causes severe performance degradation on Hexagon NPU:
+    // - First tokens: 10 tokens/s
+    // - After 20-30 tokens: degrades to 1-2 tokens/s
+    // Root cause: FA implementation incompatible with Hexagon backend
+    ctx_params.n_ctx = 2048;              // Smaller context for stability
+    ctx_params.n_batch = 512;             // Larger batch (official default)
+    ctx_params.n_ubatch = 512;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // ENABLE Flash Attention - This is the performance key!
-    // Testing with smaller context to avoid crash
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    // DISABLE Flash Attention - Incompatible with Hexagon NPU
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
-    // CRITICAL: Enable KV cache offloading to NPU
+    // Keep KV cache offloading
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (TESTING: FA + smaller ctx):");
-    LOGI("  - Context size: %d (reduced to avoid FA crash)", ctx_params.n_ctx);
+    LOGI("Context params (STABLE CONFIG - FA DISABLED):");
+    LOGI("  - Context size: %d", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: ENABLED (performance key!)");
-    LOGI("  - KV cache offload: %s", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
+    LOGI("  - Flash Attention: DISABLED (prevents degradation)");
+    LOGI("  - KV cache offload: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

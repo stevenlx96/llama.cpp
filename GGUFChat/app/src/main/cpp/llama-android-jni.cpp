@@ -337,27 +337,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Start with conservative settings, then optimize incrementally
-    // Official config (8192 ctx, 128 batch, FA on) made it WORSE (2 tokens/s vs 10 tokens/s)
-    // Trying smaller values optimized for mobile hardware
-    ctx_params.n_ctx = 2048;              // Keep original (not 8192)
-    ctx_params.n_batch = 512;             // Default value (not 128)
-    ctx_params.n_ubatch = 512;            // Match n_batch
+    // MATCH OFFICIAL CONFIG EXACTLY - Testing if this fixes NPU performance
+    // Official benchmark: 51 tokens/s with these params
+    // Reference: scripts/snapdragon/adb/run-completion.sh
+    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
+    ctx_params.n_batch = 128;             // Official: --batch-size 128
+    ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // EXPERIMENT: Disable Flash Attention - it might use operations NPU doesn't support
-    // This could be causing the HTP0 -> CPU -> HTP0 splits
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // Official uses Flash Attention ON
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 
     // CRITICAL: Enable KV cache offloading to NPU
-    // offload_kqv MUST be true for NPU performance
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (conservative mobile config):");
-    LOGI("  - Context size: %d", ctx_params.n_ctx);
-    LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED (testing if it causes CPU splits)");
+    LOGI("Context params (OFFICIAL BENCHMARK CONFIG):");
+    LOGI("  - Context size: %d (official uses 8192)", ctx_params.n_ctx);
+    LOGI("  - Batch size: %d (official uses 128)", ctx_params.n_batch);
+    LOGI("  - Flash Attention: ENABLED (official uses -fa on)");
     LOGI("  - KV cache offload: %s", ctx_params.offload_kqv ? "ENABLED" : "DISABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);

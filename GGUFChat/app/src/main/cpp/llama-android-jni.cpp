@@ -337,27 +337,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // STABILITY TEST: Disable Flash Attention
-    // FA causes severe performance degradation on Hexagon NPU:
-    // - First tokens: 10 tokens/s
-    // - After 20-30 tokens: degrades to 1-2 tokens/s
-    // Root cause: FA implementation incompatible with Hexagon backend
-    ctx_params.n_ctx = 2048;              // Smaller context for stability
-    ctx_params.n_batch = 512;             // Larger batch (official default)
-    ctx_params.n_ubatch = 512;            // Match n_batch
+    // OFFICIAL CONFIG: Match llama.cpp Hexagon NPU configuration
+    // Based on scripts/snapdragon/adb/run-completion.sh:
+    // --ctx-size 8192 --batch-size 128 -fa on
+    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
+    ctx_params.n_batch = 128;             // Official: --batch-size 128
+    ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention - Incompatible with Hexagon NPU
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // ENABLE Flash Attention - Official configuration uses it
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Official: -fa on
 
-    // Keep KV cache offloading
+    // KV cache offloading
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (STABLE CONFIG - FA DISABLED):");
+    LOGI("Context params (OFFICIAL HEXAGON CONFIG):");
     LOGI("  - Context size: %d", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED (prevents degradation)");
+    LOGI("  - Flash Attention: ENABLED (official config)");
     LOGI("  - KV cache offload: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);

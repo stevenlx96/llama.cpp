@@ -337,25 +337,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // OFFICIAL CONFIG: Match llama.cpp Hexagon NPU configuration exactly
-    // Based on scripts/snapdragon/adb/run-completion.sh:
-    // --ctx-size 8192 --batch-size 128 -fa on
+    // TEMPORARY: Disable Flash Attention to fix crash after 57 tokens
+    // Official config uses FA, but it causes ggml_abort in streaming mode
+    // TODO: investigate why FA crashes in streaming but not in llama-completion
     ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
     ctx_params.n_batch = 128;             // Official: --batch-size 128
     ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // ENABLE Flash Attention - Official configuration uses it
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Official: -fa on
+    // DISABLE Flash Attention temporarily (crashes after ~57 tokens)
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
     // KV cache offloading
     ctx_params.offload_kqv = true;
 
-    LOGI("Context params (OFFICIAL HEXAGON CONFIG):");
+    LOGI("Context params (STABLE CONFIG - FA DISABLED for now):");
     LOGI("  - Context size: %d", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: ENABLED (official config)");
+    LOGI("  - Flash Attention: DISABLED (prevents crash)");
     LOGI("  - KV cache offload: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);

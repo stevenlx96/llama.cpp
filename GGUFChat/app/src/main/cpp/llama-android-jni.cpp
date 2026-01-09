@@ -453,8 +453,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     llama_model* model = android_ctx->model;
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
-// Clear KV cache
-    llama_memory_seq_rm(llama_get_memory(ctx), -1, 0, -1);
+// Clear KV cache thoroughly (critical for multi-turn stability)
+    llama_kv_cache_clear(ctx);
     LOGD("KV Cache cleared");
 
 // Create sampler chain
@@ -641,8 +641,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     llama_model* model = android_ctx->model;
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
-// Clear KV cache
-    llama_memory_seq_rm(llama_get_memory(ctx), -1, 0, -1);
+// Clear KV cache thoroughly (critical for multi-turn stability)
+    llama_kv_cache_clear(ctx);
     LOGD("KV Cache cleared");
 
 // Create sampler chain
@@ -802,6 +802,12 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
                     pending_token_buffer = tail; // Keep the tail (which is incomplete UTF-8 or empty)
                 }
             }
+        }
+
+        // Simple stop check: limit to 256 tokens for stability
+        if (generation_token_count >= 256) {
+            LOGD("Stopping: reached 256 token limit");
+            break;
         }
 
 // Only continue decoding if we haven't found end marker

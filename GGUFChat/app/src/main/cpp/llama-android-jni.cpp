@@ -804,20 +804,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
             }
         }
 
-// Check if should stop generation (same logic as non-streaming version)
-        if (!found_end && should_stop_generation(total_generated_text, generation_token_count)) {
-            LOGD("Stopping streaming generation early at token %d", i);
-            // Flush remaining buffer before stopping
-            if (!pending_token_buffer.empty()) {
-                size_t marker_pos = pending_token_buffer.find(end_marker);
-                if (marker_pos == std::string::npos) {
-                    token_callback(pending_token_buffer);
-                    pending_token_buffer.clear();
-                }
-            }
-            break;
-        }
-
 // Only continue decoding if we haven't found end marker
         if (!found_end) {
 // Decode next token

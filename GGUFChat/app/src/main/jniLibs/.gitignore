@@ -1,0 +1,7 @@
+# Ignore large .so files (too big for Git)
+# Users should copy these from official pkg-adb/llama.cpp/lib/
+*.so
+
+# Keep directory structure
+!.gitkeep
+!README.md

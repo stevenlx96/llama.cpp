@@ -141,7 +141,11 @@ class GGUFChatEngine {
             Log.d(TAG, "Loading model from: $path")
             Log.d(TAG, "Model size: ${file.length() / 1024 / 1024} MB")
 
-            val numThreads = Runtime.getRuntime().availableProcessors()
+            // Match official Hexagon config: use 6 threads (not all cores)
+            // Official: --poll 1000 -t 6 --cpu-mask 0xfc --cpu-strict 1
+            // Using 6 threads helps avoid small cores (CPU 0-1) on Snapdragon
+            val numThreads = 6
+            Log.d(TAG, "Using $numThreads threads (official config)")
             contextPtr = nativeInit(path, numThreads)
 
             if (contextPtr == 0L) {

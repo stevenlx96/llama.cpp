@@ -5,194 +5,53 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "CMAKE BUILD START")
+message(STATUS "CMAKE BUILD FROM SOURCE (like official)")
 message(STATUS "========================================")
 
 # ============================================================================
-# SECTION 1: Paths Setup
+# CRITICAL: Compile from source like official llama.android example!
+# Reference: examples/llama.android/lib/src/main/cpp/CMakeLists.txt
 # ============================================================================
 
-set(PREBUILT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}")
-set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+# Point to llama.cpp source root (4 levels up from app/src/main/cpp/)
+set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../)
+message(STATUS "LLAMA_SRC: ${LLAMA_SRC}")
 
-message(STATUS "Android ABI: ${ANDROID_ABI}")
-message(STATUS "Prebuilt libs: ${PREBUILT_LIB_DIR}")
-message(STATUS "Include dir: ${INCLUDE_DIR}")
-message(STATUS "Source dir: ${CMAKE_CURRENT_SOURCE_DIR}")
-
-# ============================================================================
-# SECTION 2: Verify All Required Files Exist
-# ============================================================================
-
-# Check C++ source file
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama-android-jni.cpp")
-    message(FATAL_ERROR "ERROR: llama-android-jni.cpp not found at ${CMAKE_CURRENT_SOURCE_DIR}/llama-android-jni.cpp")
-endif()
-message(STATUS "✓ Found llama-android-jni.cpp")
-
-# Check include directory
-if(NOT EXISTS "${INCLUDE_DIR}")
-    message(WARNING "Include directory not found at ${INCLUDE_DIR}")
+# Set architecture for ARM64
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_SYSTEM_ARCH "ARM")
+    message(STATUS "Architecture: ARM (arm64-v8a)")
 endif()
 
-# Check prebuilt libraries
-set(REQUIRED_LIBS
-        "libggml-base.so"
-        "libggml-cpu.so"
-        "libggml-hexagon.so"
-        "libggml-htp-v73.so"
-        "libggml-htp-v75.so"
-        "libggml-htp-v79.so"
-        "libggml-htp-v81.so"
-        "libggml.so"
-        "libllama.so"
-)
+# Enable Hexagon NPU support
+set(GGML_HEXAGON ON CACHE BOOL "Enable Hexagon backend" FORCE)
+message(STATUS "GGML_HEXAGON: ON")
 
-foreach(lib ${REQUIRED_LIBS})
-    if(NOT EXISTS "${PREBUILT_LIB_DIR}/${lib}")
-        message(FATAL_ERROR "ERROR: ${lib} not found at ${PREBUILT_LIB_DIR}/${lib}")
-    endif()
-    message(STATUS "✓ Found ${lib}")
-endforeach()
+# Add llama.cpp as subdirectory - this compiles everything!
+add_subdirectory(${LLAMA_SRC} build-llama EXCLUDE_FROM_ALL)
 
-message(STATUS "All required files verified!")
+# Create JNI wrapper library
+add_library(${CMAKE_PROJECT_NAME} SHARED
+        llama-android-jni.cpp)
 
-# ============================================================================
-# SECTION 3: Create JNI Wrapper Library
-# ============================================================================
+message(STATUS "Created llama-android JNI wrapper")
 
-add_library(llama-android SHARED
-        "llama-android-jni.cpp"
-)
-
-message(STATUS "Created llama-android target from llama-android-jni.cpp")
-
-# ============================================================================
-# SECTION 4: Configure Include Paths
-# ============================================================================
-
-target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
-message(STATUS "Added include directory: ${INCLUDE_DIR}")
-
-# ============================================================================
-# SECTION 5: Link System Libraries
-# ============================================================================
-
-target_link_libraries(llama-android PRIVATE
+# Link to llama libraries (compiled from source)
+target_link_libraries(${CMAKE_PROJECT_NAME}
+        llama
         android
-        log
-        m
-        atomic
-)
+        log)
 
-message(STATUS "Linked system libraries: android, log, m, atomic")
+message(STATUS "Linked to llama library (from source)")
 
-# ============================================================================
-# SECTION 6: Import Prebuilt Libraries with Dependencies
-# ============================================================================
-
-# ggml-base (no dependencies)
-add_library(ggml_base_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_base_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-base.so"
-)
-message(STATUS "Imported ggml_base_prebuilt")
-
-# ggml-cpu (depends on ggml-base)
-add_library(ggml_cpu_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_cpu_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-cpu.so"
-        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-)
-message(STATUS "Imported ggml_cpu_prebuilt (depends on ggml-base)")
-
-# ggml-hexagon (depends on ggml-base)
-add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_hexagon_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-hexagon.so"
-        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-)
-message(STATUS "Imported ggml_hexagon_prebuilt (depends on ggml-base)")
-
-# HTP libraries (v73, v75, v79, v81) are NOT imported as CMake targets
-# They will be loaded dynamically by libggml-hexagon.so at runtime
-message(STATUS "HTP libraries will be loaded dynamically by Hexagon backend")
-
-# ggml (depends on ggml-base, ggml-cpu, and ggml-hexagon)
-add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt"
-)
-message(STATUS "Imported ggml_prebuilt (depends on ggml-base, ggml-cpu, ggml-hexagon)")
-
-# llama (depends on all ggml libraries including hexagon)
-add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(llama_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
-)
-message(STATUS "Imported llama_prebuilt (depends on all ggml libraries including Hexagon NPU)")
-
-# Note: HTP libraries (v73, v75, v79, v81) are NOT linked here!
-# They are loaded dynamically by libggml-hexagon.so at runtime.
-# Just make sure they're in the same directory as other .so files.
-
-# ============================================================================
-# SECTION 7: Link Prebuilt Libraries to JNI Wrapper
-# ============================================================================
-
-target_link_libraries(llama-android PRIVATE llama_prebuilt)
-message(STATUS "Linked llama_prebuilt to llama-android (with transitive dependencies)")
-
-# ============================================================================
-# SECTION 8: Compiler Options
-# ============================================================================
-
-target_compile_options(llama-android PRIVATE
+# Set compiler options
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         -O3
         -fPIC
-        -fvisibility=default
         -Wall
-        -Wextra
-        -Wno-deprecated-declarations
-)
-message(STATUS "Set compiler options: -O3, -fPIC, -fvisibility=default")
-
-# ============================================================================
-# SECTION 9: Linker Options
-# ============================================================================
-
-target_link_options(llama-android PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-soname,libllama-android.so
-        -Wl,--export-dynamic
-)
-message(STATUS "Set linker options: --allow-shlib-undefined, -soname")
-
-# ============================================================================
-# SECTION 10: Debug Symbols
-# ============================================================================
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(llama-android PRIVATE -g)
-    message(STATUS "Debug build: symbols included")
-else()
-    target_compile_options(llama-android PRIVATE -g)
-    message(STATUS "Release build: symbols included for JNI")
-endif()
-
-# ============================================================================
-# FINAL SUMMARY
-# ============================================================================
+        -Wextra)
 
 message(STATUS "========================================")
 message(STATUS "✓ CMAKE CONFIGURATION COMPLETE")
-message(STATUS "========================================")
-message(STATUS "Target: llama-android")
-message(STATUS "Type: SHARED library (JNI wrapper)")
-message(STATUS "Source: llama-android-jni.cpp")
-message(STATUS "Include: ${INCLUDE_DIR}")
-message(STATUS "Dependencies: llama + ggml libraries")
-message(STATUS "Output: libllama-android.so")
+message(STATUS "Building from SOURCE (official method)")
 message(STATUS "========================================")

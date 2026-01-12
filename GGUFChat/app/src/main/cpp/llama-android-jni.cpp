@@ -198,10 +198,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
     if (lib_dir && strlen(lib_dir) > 0) {
         LOGI("Loading all backends from: %s", lib_dir);
-
-        // Load all backend plugins (ggml-hexagon.so, ggml-opencl.so, ggml-htp-*.so, etc.)
         ggml_backend_load_all_from_path(lib_dir);
-
         LOGI("✓ All backend plugins loaded");
     } else {
         LOGE("⚠ No library path provided, backends may not load correctly!");
@@ -212,61 +209,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_backend_init();
     LOGI("✓ llama backend initialized");
 
-    // 列出所有可用的后端设备
-    LOGI("----------------------------------------");
-    LOGI("Listing available backends...");
-
-    size_t dev_count = ggml_backend_dev_count();
-    LOGI("Total backend devices: %zu", dev_count);
-
-    ggml_backend_dev_t hexagon_dev = nullptr;
-    ggml_backend_dev_t cpu_dev = nullptr;
-
-    // 安全地遍历所有设备，查找 Hexagon 和 CPU backend
-    for (size_t i = 0; i < dev_count; i++) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        if (!dev) {
-            LOGE("  [%zu] NULL device (skipping)", i);
-            continue;
-        }
-
-        const char* dev_name = ggml_backend_dev_name(dev);
-        const char* dev_desc = ggml_backend_dev_description(dev);
-
-        if (!dev_name || !dev_desc) {
-            LOGE("  [%zu] Invalid device name/description (skipping)", i);
-            continue;
-        }
-
-        LOGI("  [%zu] %s - %s", i, dev_name, dev_desc);
-
-        // 查找 Hexagon NPU (HTP0 或包含 "Hexagon" 的设备)
-        if (strstr(dev_name, "HTP") != nullptr || strstr(dev_name, "Hexagon") != nullptr) {
-            hexagon_dev = dev;
-            LOGI("    → Found Hexagon NPU!");
-        }
-
-        // 查找 CPU backend
-        if (strstr(dev_name, "CPU") != nullptr) {
-            cpu_dev = dev;
-            LOGI("    → Found CPU backend");
-        }
-    }
-
-    // Note: We use default model params, so backend selection is automatic
-    // Just log what's available for debugging
-    LOGI("----------------------------------------");
-    if (hexagon_dev) {
-        LOGI("✓ Hexagon NPU detected");
-        size_t npu_mem_free = 0, npu_mem_total = 0;
-        ggml_backend_dev_memory(hexagon_dev, &npu_mem_free, &npu_mem_total);
-        LOGI("  Memory: %.2f MB free / %.2f MB total",
-             npu_mem_free / (1024.0 * 1024.0),
-             npu_mem_total / (1024.0 * 1024.0));
-    }
-    if (cpu_dev) {
-        LOGI("✓ CPU backend detected");
-    }
+    // NOTE: Official example does NOT enumerate backends here!
+    // We skip device enumeration to match official behavior exactly.
 
     // 配置模型参数
     LOGI("----------------------------------------");

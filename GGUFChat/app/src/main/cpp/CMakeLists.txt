@@ -5,53 +5,136 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "CMAKE BUILD FROM SOURCE (like official)")
+message(STATUS "CMAKE BUILD WITH PREBUILT LIBS (matching Docker flags)")
 message(STATUS "========================================")
 
 # ============================================================================
-# CRITICAL: Compile from source like official llama.android example!
-# Reference: examples/llama.android/lib/src/main/cpp/CMakeLists.txt
+# CRITICAL: Match Docker compilation flags EXACTLY!
+# Reference: docs/backend/hexagon/CMakeUserPresets.json
 # ============================================================================
 
-# Point to llama.cpp source root (4 levels up from app/src/main/cpp/)
-set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../)
-message(STATUS "LLAMA_SRC: ${LLAMA_SRC}")
+# CRITICAL: Use SAME flags as Docker build to ensure ABI compatibility!
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
 
-# Set architecture for ARM64
-if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(GGML_SYSTEM_ARCH "ARM")
-    message(STATUS "Architecture: ARM (arm64-v8a)")
-endif()
+message(STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
+message(STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")
 
-# Enable Hexagon NPU support
-set(GGML_HEXAGON ON CACHE BOOL "Enable Hexagon backend" FORCE)
-message(STATUS "GGML_HEXAGON: ON")
+# ============================================================================
+# Paths Setup
+# ============================================================================
 
-# Add llama.cpp as subdirectory - this compiles everything!
-add_subdirectory(${LLAMA_SRC} build-llama EXCLUDE_FROM_ALL)
+set(PREBUILT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}")
+set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-# Create JNI wrapper library
-add_library(${CMAKE_PROJECT_NAME} SHARED
-        llama-android-jni.cpp)
+message(STATUS "Android ABI: ${ANDROID_ABI}")
+message(STATUS "Prebuilt libs: ${PREBUILT_LIB_DIR}")
+message(STATUS "Include dir: ${INCLUDE_DIR}")
 
-message(STATUS "Created llama-android JNI wrapper")
+# ============================================================================
+# Verify Required Files
+# ============================================================================
 
-# Link to llama libraries (compiled from source)
-target_link_libraries(${CMAKE_PROJECT_NAME}
-        llama
+set(REQUIRED_LIBS
+        "libggml-base.so"
+        "libggml-cpu.so"
+        "libggml-hexagon.so"
+        "libggml-htp-v73.so"
+        "libggml-htp-v75.so"
+        "libggml-htp-v79.so"
+        "libggml-htp-v81.so"
+        "libggml.so"
+        "libllama.so"
+)
+
+foreach(lib ${REQUIRED_LIBS})
+    if(NOT EXISTS "${PREBUILT_LIB_DIR}/${lib}")
+        message(FATAL_ERROR "ERROR: ${lib} not found at ${PREBUILT_LIB_DIR}/${lib}")
+    endif()
+    message(STATUS "✓ Found ${lib}")
+endforeach()
+
+# ============================================================================
+# Create JNI Wrapper with MATCHING FLAGS
+# ============================================================================
+
+add_library(llama-android SHARED llama-android-jni.cpp)
+
+target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
+
+# Link system libraries
+target_link_libraries(llama-android PRIVATE
         android
-        log)
+        log
+        m
+        atomic
+)
 
-message(STATUS "Linked to llama library (from source)")
+# ============================================================================
+# Import Prebuilt Libraries
+# ============================================================================
 
-# Set compiler options
-target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
+# ggml-base
+add_library(ggml_base_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_base_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-base.so"
+)
+
+# ggml-cpu
+add_library(ggml_cpu_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_cpu_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-cpu.so"
+        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
+)
+
+# ggml-hexagon
+add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_hexagon_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-hexagon.so"
+        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
+)
+
+# ggml
+add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
+        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt"
+)
+
+# llama
+add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(llama_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
+        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
+)
+
+target_link_libraries(llama-android PRIVATE llama_prebuilt)
+
+# ============================================================================
+# Compiler Options - MATCH DOCKER!
+# ============================================================================
+
+target_compile_options(llama-android PRIVATE
         -O3
+        -DNDEBUG
         -fPIC
+        -fvisibility=default
         -Wall
-        -Wextra)
+        -Wextra
+        -Wno-deprecated-declarations
+)
+
+# ============================================================================
+# Linker Options
+# ============================================================================
+
+target_link_options(llama-android PRIVATE
+        -Wl,--allow-shlib-undefined
+        -Wl,-soname,libllama-android.so
+        -Wl,--export-dynamic
+)
 
 message(STATUS "========================================")
 message(STATUS "✓ CMAKE CONFIGURATION COMPLETE")
-message(STATUS "Building from SOURCE (official method)")
+message(STATUS "Using prebuilt .so with MATCHING Docker flags")
 message(STATUS "========================================")

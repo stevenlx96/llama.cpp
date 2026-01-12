@@ -1,12 +1,57 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <android/log.h>
 #include "llama.h"
+#include "ggml-backend.h"
+#include "ggml-hexagon.h"
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+
+// Custom log callback to redirect ggml logs to Android logcat
+void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
+    (void) user_data;
+
+    // FILTER: Skip repack messages (too verbose, user request)
+    if (strstr(text, "repack:") != nullptr || strstr(text, "repack tensor") != nullptr) {
+        return;  // Silently ignore repack messages
+    }
+
+    // Map ggml log levels to Android log priorities
+    int android_priority;
+    switch (level) {
+        case GGML_LOG_LEVEL_ERROR:
+            android_priority = ANDROID_LOG_ERROR;
+            break;
+        case GGML_LOG_LEVEL_WARN:
+            android_priority = ANDROID_LOG_WARN;
+            break;
+        case GGML_LOG_LEVEL_INFO:
+            android_priority = ANDROID_LOG_INFO;
+            break;
+        case GGML_LOG_LEVEL_DEBUG:
+            android_priority = ANDROID_LOG_DEBUG;
+            break;
+        default:
+            android_priority = ANDROID_LOG_VERBOSE;
+            break;
+    }
+
+    // Remove trailing newline if present (logcat adds its own)
+    size_t len = strlen(text);
+    if (len > 0 && text[len - 1] == '\n') {
+        char * text_copy = strdup(text);
+        text_copy[len - 1] = '\0';
+        __android_log_write(android_priority, "llama.cpp", text_copy);
+        free(text_copy);
+    } else {
+        __android_log_write(android_priority, "llama.cpp", text);
+    }
+}
 
 struct llama_android_context {
     llama_model* model;
@@ -131,46 +176,114 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
-        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads) {
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
-    LOGD("Loading model from: %s", path);
-    LOGD("Using %d threads", nThreads);
+    LOGI("========================================");
+    LOGI("🚀 GGUFChat Hexagon NPU Initialization");
+    LOGI("========================================");
+    LOGI("Model path: %s", path);
+    LOGI("Threads: %d", nThreads);
 
+    // CRITICAL: Set custom log callback BEFORE llama_backend_init()
+    // This redirects BOTH ggml AND llama logs to Android logcat
+    // Using llama_log_set() instead of ggml_log_set() ensures we capture
+    // llama's own messages including "offloaded X/Y layers to GPU"
+    llama_log_set(ggml_log_callback_android, nullptr);
+    LOGI("✓ Android logcat callback installed for ggml and llama");
+
+    // CRITICAL FIX: Load all backend plugins BEFORE llama_backend_init()
+    // This is required for Hexagon NPU and other backends to work!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:51
+    const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
+    if (lib_dir && strlen(lib_dir) > 0) {
+        LOGI("Loading all backends from: %s", lib_dir);
+        ggml_backend_load_all_from_path(lib_dir);
+        LOGI("✓ All backend plugins loaded");
+    } else {
+        LOGE("⚠ No library path provided, backends may not load correctly!");
+    }
+    env->ReleaseStringUTFChars(libPath, lib_dir);
+
+    // 初始化 llama 后端
     llama_backend_init();
+    LOGI("✓ llama backend initialized");
 
+    // NOTE: Official example does NOT enumerate backends here!
+    // We skip device enumeration to match official behavior exactly.
+
+    // 配置模型参数
+    LOGI("----------------------------------------");
+    LOGI("Loading model...");
+
+    // CRITICAL: Use COMPLETELY DEFAULT params like official example!
+    // Official example does NOT modify any model params!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:62-67
     llama_model_params model_params = llama_model_default_params();
-    llama_model* model = llama_model_load_from_file(path, model_params);
 
+    LOGI("Model params: COMPLETELY DEFAULT (auto device detection)");
+    LOGI("  - No manual configuration");
+    LOGI("  - Let llama.cpp auto-detect and configure everything");
+
+    // 加载模型
+    llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
-        LOGE("Failed to load model");
+        LOGE("❌ Failed to load model");
         return 0;
     }
 
     const llama_vocab* vocab = llama_model_get_vocab(model);
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    LOGD("Model loaded, vocab size: %d", n_vocab);
+    int32_t n_layer = llama_model_n_layer(model);
 
+    LOGI("✓ Model loaded successfully");
+    LOGI("  Vocab size: %d", n_vocab);
+    LOGI("  Total layers: %d", n_layer);
+
+    // 创建 context
+    LOGI("----------------------------------------");
+    LOGI("Creating llama context...");
+
+    // CRITICAL: Match official example EXACTLY!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 2048;
+
+    // Official configuration
+    const int DEFAULT_CONTEXT_SIZE = 8192;
+    const int BATCH_SIZE = 512;  // Official uses 512, NOT 128!
+
+    ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
+    ctx_params.n_batch = BATCH_SIZE;
+    ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
+
+    LOGI("Context params (OFFICIAL CONFIG):");
+    LOGI("  - n_ctx: %d", ctx_params.n_ctx);
+    LOGI("  - n_batch: %d", ctx_params.n_batch);
+    LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
+    LOGI("  - threads: %d", nThreads);
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 
     if (!ctx) {
-        LOGE("Failed to create context");
+        LOGE("❌ Failed to create context");
         llama_model_free(model);
         return 0;
     }
+
+    LOGI("✓ Context created successfully");
 
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
 
-    LOGD("Model loaded successfully, context created");
+    LOGI("========================================");
+    LOGI("✅ Initialization complete!");
+    LOGI("========================================");
+
     return reinterpret_cast<jlong>(android_ctx);
 }
 
@@ -316,6 +429,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     const std::string end_marker = "<|im_end|>";
     bool found_end = false;
 
+    // Start timing for performance measurement
+    auto gen_start_time = std::chrono::high_resolution_clock::now();
+
 // Generation loop - no streaming, just collect all tokens
     for (int i = 0; i < nPredict; i++) {
         llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
@@ -371,8 +487,21 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
 
     llama_sampler_free(sampler);
 
+    // Calculate and log performance metrics
+    auto gen_end_time = std::chrono::high_resolution_clock::now();
+    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
+    double gen_time_sec = gen_duration.count() / 1000.0;
+    double tokens_per_sec = generation_token_count / gen_time_sec;
+
+    LOGI("========================================");
+    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("  Generated tokens: %d", generation_token_count);
+    LOGI("  Generation time: %.2f seconds", gen_time_sec);
+    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
+    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
+
     LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
-    LOGD("Final static result: '%s'", result.c_str());
     return env->NewStringUTF(result.c_str());
 }
 
@@ -490,6 +619,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     std::string pending_token_buffer;
     int generation_token_count = 0;
 
+    // Start timing for performance measurement
+    auto gen_start_time = std::chrono::high_resolution_clock::now();
+
 // Generation loop - stream tokens as they are generated
     const std::string end_marker = "<|im_end|>";
     bool found_end = false;
@@ -577,6 +709,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
                 }
             }
         }
+        // Simple stop check: limit to 256 tokens for stability
+        if (generation_token_count >= 256) {
+            LOGD("Stopping: reached 256 token limit");
+            break;
+        }
 
 // Only continue decoding if we haven't found end marker
         if (!found_end) {
@@ -610,6 +747,20 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     }
 
     llama_sampler_free(sampler);
+
+    // Calculate and log performance metrics
+    auto gen_end_time = std::chrono::high_resolution_clock::now();
+    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
+    double gen_time_sec = gen_duration.count() / 1000.0;
+    double tokens_per_sec = generation_token_count / gen_time_sec;
+
+    LOGI("========================================");
+    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("  Generated tokens: %d", generation_token_count);
+    LOGI("  Generation time: %.2f seconds", gen_time_sec);
+    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
+    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);
 

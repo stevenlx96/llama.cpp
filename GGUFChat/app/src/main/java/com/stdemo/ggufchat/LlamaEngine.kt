@@ -14,7 +14,7 @@ class GGUFChatEngine {
     }
 
     // Native methods
-    private external fun nativeInit(modelPath: String, nThreads: Int): Long
+    private external fun nativeInit(modelPath: String, nThreads: Int, libPath: String): Long
 
     // Static (non-streaming) completion - returns complete response at once
     private external fun nativeCompletion(
@@ -51,6 +51,7 @@ class GGUFChatEngine {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isGenerating = AtomicBoolean(false)
     private val shouldStopGeneration = AtomicBoolean(false)
+    private var nativeLibraryPath: String = ""  // Store native lib path for backend loading
 
     // Configuration and history
     private val promptBuilder = ChatPromptBuilder()
@@ -59,9 +60,72 @@ class GGUFChatEngine {
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
-            // CRITICAL FIX: Only load llama-android
-            // CMakeLists.txt handles ALL dependency linking
-            // This is the correct and simple approach
+            // --- 核心修复：注入 NPU 搜索路径 ---
+            // 尝试通过多种方式获取 nativeLibraryDir
+            val nativeLibDir = try {
+                // 1. 如果能拿到 context 就用 context (最标准)
+                // 这里我们尝试通过类加载器找到路径，或者在后面 loadModel 时再设置
+                // 但最简单的办法是在 System.loadLibrary 之前拿到当前应用的路径
+
+                // 这种方式不需要依赖隐藏 API
+                val info = java.io.File("/proc/self/maps").takeIf { it.exists() }
+                // 实际上，更通用的做法是在 Engine 初始化时由外部传入 Context
+                // 或者直接通过反射获取当前的 Application (比 AppGlobals 安全一点点)
+                val clazz = Class.forName("android.app.ActivityThread")
+                val method = clazz.getDeclaredMethod("currentApplication")
+                val app = method.invoke(null) as? android.app.Application
+                app?.applicationContext?.applicationInfo?.nativeLibraryDir
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not resolve nativeLibDir via reflection: ${e.message}")
+                null
+            }
+
+            if (nativeLibDir != null) {
+                // CRITICAL: Save native library path for backend loading in JNI
+                nativeLibraryPath = nativeLibDir
+
+                try {
+                    // Get HTP deployment directory - need to get app context again
+                    val htpDir = try {
+                        val clazz = Class.forName("android.app.ActivityThread")
+                        val method = clazz.getDeclaredMethod("currentApplication")
+                        val currentApp = method.invoke(null) as? android.app.Application
+                        currentApp?.let { HexagonHtpDeployer.getHtpDeploymentPath(it) } ?: ""
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not get HTP deployment path: ${e.message}")
+                        ""
+                    }
+
+                    // Include HTP deployment directory in search path
+                    val adspPath = if (htpDir.isNotEmpty()) {
+                        "$htpDir;$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
+                    } else {
+                        "$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
+                    }
+
+                    android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
+                    android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
+
+                    // EXPERIMENT: Enable Hexagon experimental features for REPACK support
+                    android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
+
+                    // Disable all debug logging - too much spam, can't see performance stats
+                    android.system.Os.setenv("GGML_SCHED_DEBUG", "0", true)
+                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "0", true)
+
+                    // CRITICAL: Disable repack verbose logging (user request)
+                    android.system.Os.setenv("GGML_LOG_DISABLE_LOGS", "1", true)
+
+                    Log.d(TAG, "NPU search path successfully injected:")
+                    Log.d(TAG, "  HTP deployment: $htpDir")
+                    Log.d(TAG, "  Native lib: $nativeLibDir")
+                    Log.d(TAG, "  Full path: $adspPath")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to set environment variables", e)
+                }
+            }
+            // --- 修复结束 ---
+
             System.loadLibrary("llama-android")
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
 
@@ -84,8 +148,13 @@ class GGUFChatEngine {
             Log.d(TAG, "Loading model from: $path")
             Log.d(TAG, "Model size: ${file.length() / 1024 / 1024} MB")
 
-            val numThreads = Runtime.getRuntime().availableProcessors()
-            contextPtr = nativeInit(path, numThreads)
+            // Match official Hexagon config: use 6 threads (not all cores)
+            // Official: --poll 1000 -t 6 --cpu-mask 0xfc --cpu-strict 1
+            // Using 6 threads helps avoid small cores (CPU 0-1) on Snapdragon
+            val numThreads = 6
+            Log.d(TAG, "Using $numThreads threads (official config)")
+            Log.d(TAG, "Passing library path to JNI: $nativeLibraryPath")
+            contextPtr = nativeInit(path, numThreads, nativeLibraryPath)
 
             if (contextPtr == 0L) {
                 return@withContext Result.failure(Exception("Model loading failed"))

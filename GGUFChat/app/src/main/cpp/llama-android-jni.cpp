@@ -265,34 +265,29 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
-    // CRITICAL DEBUG: Force CPU-only to isolate NPU-related crashes
-    // The SEGFAULT during context creation persists even with conservative params
-    // Testing CPU-only to determine if the issue is NPU-specific or general
-    static ggml_backend_dev_t devices[2];
-    if (cpu_dev) {
-        devices[0] = cpu_dev;
-        devices[1] = nullptr;
-        model_params.devices = devices;
-        LOGI("Device list: CPU ONLY (debug mode - isolating NPU issues)");
-    } else {
-        model_params.devices = nullptr;
-        LOGI("Device selection: AUTO (no CPU device found)");
-    }
+    // FIXED: Header files updated to match .so version!
+    // The crash was caused by struct layout mismatch between old headers and new .so
+    // Now using auto device selection for proper NPU support
+    model_params.devices = nullptr;  // Let llama.cpp auto-select devices
+    LOGI("Device selection: AUTO (llama.cpp will configure available devices)");
 
     // CRITICAL: Disable mmap (match official --no-mmap flag)
     // Official Hexagon benchmark explicitly uses --no-mmap for best performance
     model_params.use_mmap = false;
     LOGI("Memory mapping: DISABLED (--no-mmap, matches official config)");
 
-    // Disable extra buffer types for CPU testing
-    model_params.use_extra_bufts = false;
-    LOGI("Extra buffer types: DISABLED (CPU testing mode)");
+    // CRITICAL: Enable extra buffer types for HTP0-REPACK!
+    // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
+    model_params.use_extra_bufts = true;
+    LOGI("Extra buffer types: ENABLED (for HTP0-REPACK weight repacking)");
 
-    // No GPU layers for CPU testing
-    model_params.n_gpu_layers = 0;
+    // CRITICAL: Offload ALL layers to NPU/GPU!
+    model_params.n_gpu_layers = -1;
 
-    LOGI("Model params configured (CPU TESTING MODE):");
-    LOGI("  - Primary device: CPU (debug)");
+    LOGI("Model params configured:");
+    LOGI("  - Primary device: %s", backend_name);
+    LOGI("  - Offloaded layers: ALL (n_gpu_layers = -1)");
+    LOGI("  - Extra buffers: ENABLED for NPU");
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);
@@ -307,10 +302,15 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
     int32_t n_layer = llama_model_n_layer(model);
 
-    LOGI("✓ Model loaded successfully (CPU TESTING MODE)");
+    LOGI("✓ Model loaded successfully on %s", backend_name);
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
-    LOGI("  GPU layers: 0 (CPU only for debug)");
+    LOGI("  Requested offload: ALL layers (n_gpu_layers = -1)");
+
+    if (hexagon_dev) {
+        LOGI("  ⚠ Note: Check logs above for 'offloaded X/%d layers' message", n_layer);
+        LOGI("  ⚠ If not all layers offloaded, NPU performance will be poor!");
+    }
 
     // 创建 context
     LOGI("----------------------------------------");
@@ -318,27 +318,24 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // CRITICAL: Conservative settings to prevent crash during context creation
-    // The newly compiled .so appears more strict about memory allocation
-    ctx_params.n_ctx = 2048;              // Reduced from 8192 to avoid memory issues
+    // Context configuration (conservative for stability with new headers)
+    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
     ctx_params.n_batch = 128;             // Official: --batch-size 128
     ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention (crashes after ~57 tokens)
+    // DISABLE Flash Attention (known to crash after ~57 tokens)
     ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
-    // CRITICAL FIX: Disable KV cache offload to prevent SEGFAULT
-    // The crash at 0x8000002008 suggests memory allocation failure in context constructor
-    // This is likely related to KV cache initialization on NPU
-    ctx_params.offload_kqv = false;
+    // KV cache offloading to NPU
+    ctx_params.offload_kqv = true;
 
-    LOGI("Context params (CONSERVATIVE CONFIG for new .so):");
-    LOGI("  - Context size: %d (reduced for stability)", ctx_params.n_ctx);
+    LOGI("Context params (NPU OPTIMIZED with updated headers):");
+    LOGI("  - Context size: %d", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED");
-    LOGI("  - KV cache offload: DISABLED (prevents SEGFAULT)");
+    LOGI("  - Flash Attention: DISABLED (stability)");
+    LOGI("  - KV cache offload: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 
@@ -357,8 +354,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     android_ctx->ctx = ctx;
 
     LOGI("========================================");
-    LOGI("✅ Initialization complete (CPU DEBUG MODE)!");
-    LOGI("⚠ This is CPU-only to isolate NPU crash issues");
+    LOGI("✅ Initialization complete (%s)!", backend_name);
+    LOGI("✅ FIXED: Header files now match .so version!");
     LOGI("========================================");
 
     return reinterpret_cast<jlong>(android_ctx);

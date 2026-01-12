@@ -316,28 +316,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("----------------------------------------");
     LOGI("Creating llama context...");
 
+    // CRITICAL: Use ZERO modifications to default params
+    // The crash persists even with updated headers, suggesting the issue
+    // may be with specific parameter values or the .so build itself
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Context configuration (conservative for stability with new headers)
-    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
-    ctx_params.n_batch = 128;             // Official: --batch-size 128
-    ctx_params.n_ubatch = 128;            // Match n_batch
+    // Only set threads (absolutely necessary)
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention (known to crash after ~57 tokens)
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    LOGI("Context params (ABSOLUTE MINIMAL - testing .so compatibility):");
+    LOGI("  - Using llama_context_default_params()");
+    LOGI("  - ONLY threads modified: %d", nThreads);
+    LOGI("  - Default n_ctx: %d", ctx_params.n_ctx);
+    LOGI("  - Default n_batch: %d", ctx_params.n_batch);
+    LOGI("  - Default offload_kqv: %s", ctx_params.offload_kqv ? "true" : "false");
 
-    // KV cache offloading to NPU
-    ctx_params.offload_kqv = true;
-
-    LOGI("Context params (NPU OPTIMIZED with updated headers):");
-    LOGI("  - Context size: %d", ctx_params.n_ctx);
-    LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED (stability)");
-    LOGI("  - KV cache offload: ENABLED");
-
+    LOGI("Calling llama_init_from_model...");
     llama_context* ctx = llama_init_from_model(model, ctx_params);
+    LOGI("llama_init_from_model returned: %p", (void*)ctx);
 
     if (!ctx) {
         LOGE("❌ Failed to create context");

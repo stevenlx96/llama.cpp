@@ -16,6 +16,11 @@
 void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
     (void) user_data;
 
+    // FILTER: Skip repack messages (too verbose, user request)
+    if (strstr(text, "repack:") != nullptr || strstr(text, "repack tensor") != nullptr) {
+        return;  // Silently ignore repack messages
+    }
+
     // Map ggml log levels to Android log priorities
     int android_priority;
     switch (level) {
@@ -332,21 +337,30 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("----------------------------------------");
     LOGI("Creating llama context...");
 
-    // CRITICAL: Use ZERO modifications to default params
-    // The crash persists even with updated headers, suggesting the issue
-    // may be with specific parameter values or the .so build itself
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Only set threads (absolutely necessary)
+    // CRITICAL FIX: Default params have n_batch (2048) > n_ctx (512)!
+    // This causes memory overflow and SEGFAULT. Must set proper values.
+    // Official Hexagon config: --ctx-size 8192 --batch-size 128
+    ctx_params.n_ctx = 8192;              // Context size
+    ctx_params.n_batch = 128;             // Batch size (MUST be <= n_ctx)
+    ctx_params.n_ubatch = 128;            // Micro-batch size
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    LOGI("Context params (ABSOLUTE MINIMAL - testing .so compatibility):");
-    LOGI("  - Using llama_context_default_params()");
-    LOGI("  - ONLY threads modified: %d", nThreads);
-    LOGI("  - Default n_ctx: %d", ctx_params.n_ctx);
-    LOGI("  - Default n_batch: %d", ctx_params.n_batch);
-    LOGI("  - Default offload_kqv: %s", ctx_params.offload_kqv ? "true" : "false");
+    // DISABLE Flash Attention (crashes after ~57 tokens in old tests)
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+
+    // KV cache offloading to NPU
+    ctx_params.offload_kqv = true;
+
+    LOGI("Context params (FIXED: batch <= ctx):");
+    LOGI("  - Context size: %d", ctx_params.n_ctx);
+    LOGI("  - Batch size: %d (MUST be <= n_ctx)", ctx_params.n_batch);
+    LOGI("  - Micro-batch: %d", ctx_params.n_ubatch);
+    LOGI("  - Threads: %d", nThreads);
+    LOGI("  - Flash Attention: DISABLED");
+    LOGI("  - KV cache offload: ENABLED");
 
     LOGI("Calling llama_init_from_model...");
     llama_context* ctx = llama_init_from_model(model, ctx_params);

@@ -113,6 +113,9 @@ class GGUFChatEngine {
                     android.system.Os.setenv("GGML_SCHED_DEBUG", "0", true)
                     android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "0", true)
 
+                    // CRITICAL: Disable repack verbose logging (user request)
+                    android.system.Os.setenv("GGML_LOG_DISABLE_LOGS", "1", true)
+
                     Log.d(TAG, "NPU search path successfully injected:")
                     Log.d(TAG, "  HTP deployment: $htpDir")
                     Log.d(TAG, "  Native lib: $nativeLibDir")

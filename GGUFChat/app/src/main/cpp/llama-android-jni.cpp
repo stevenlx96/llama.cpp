@@ -171,7 +171,7 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
-        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads) {
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     LOGI("========================================");
@@ -186,6 +186,22 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // llama's own messages including "offloaded X/Y layers to GPU"
     llama_log_set(ggml_log_callback_android, nullptr);
     LOGI("✓ Android logcat callback installed for ggml and llama");
+
+    // CRITICAL FIX: Load all backend plugins BEFORE llama_backend_init()
+    // This is required for Hexagon NPU and other backends to work!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:51
+    const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
+    if (lib_dir && strlen(lib_dir) > 0) {
+        LOGI("Loading all backends from: %s", lib_dir);
+
+        // Load all backend plugins (ggml-hexagon.so, ggml-opencl.so, ggml-htp-*.so, etc.)
+        ggml_backend_load_all_from_path(lib_dir);
+
+        LOGI("✓ All backend plugins loaded");
+    } else {
+        LOGE("⚠ No library path provided, backends may not load correctly!");
+    }
+    env->ReleaseStringUTFChars(libPath, lib_dir);
 
     // 初始化 llama 后端
     llama_backend_init();

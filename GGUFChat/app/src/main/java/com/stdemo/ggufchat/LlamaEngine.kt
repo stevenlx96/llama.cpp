@@ -14,7 +14,7 @@ class GGUFChatEngine {
     }
 
     // Native methods
-    private external fun nativeInit(modelPath: String, nThreads: Int): Long
+    private external fun nativeInit(modelPath: String, nThreads: Int, libPath: String): Long
 
     // Static (non-streaming) completion - returns complete response at once
     private external fun nativeCompletion(
@@ -51,6 +51,7 @@ class GGUFChatEngine {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isGenerating = AtomicBoolean(false)
     private val shouldStopGeneration = AtomicBoolean(false)
+    private var nativeLibraryPath: String = ""  // Store native lib path for backend loading
 
     // Configuration and history
     private val promptBuilder = ChatPromptBuilder()
@@ -80,6 +81,9 @@ class GGUFChatEngine {
             }
 
             if (nativeLibDir != null) {
+                // CRITICAL: Save native library path for backend loading in JNI
+                nativeLibraryPath = nativeLibDir
+
                 try {
                     // Get HTP deployment directory - need to get app context again
                     val htpDir = try {
@@ -146,7 +150,8 @@ class GGUFChatEngine {
             // Using 6 threads helps avoid small cores (CPU 0-1) on Snapdragon
             val numThreads = 6
             Log.d(TAG, "Using $numThreads threads (official config)")
-            contextPtr = nativeInit(path, numThreads)
+            Log.d(TAG, "Passing library path to JNI: $nativeLibraryPath")
+            contextPtr = nativeInit(path, numThreads, nativeLibraryPath)
 
             if (contextPtr == 0L) {
                 return@withContext Result.failure(Exception("Model loading failed"))

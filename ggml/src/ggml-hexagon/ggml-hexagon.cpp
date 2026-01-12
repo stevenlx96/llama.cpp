@@ -1591,7 +1591,42 @@ void ggml_hexagon_session::allocate(int dev_id) noexcept(false) {
     char session_uri[256];
     {
         char htp_uri[256];
-        snprintf(htp_uri, sizeof(htp_uri), "file:///libggml-htp-v%u.so?htp_iface_skel_handle_invoke&_modver=1.0", opt_arch);
+
+        // ANDROID APK FIX: Try to use absolute path from ADSP_LIBRARY_PATH
+        const char* adsp_path = getenv("ADSP_LIBRARY_PATH");
+        const char* first_path = nullptr;
+
+        if (adsp_path && strlen(adsp_path) > 0) {
+            // Extract first path from semicolon/colon-separated list
+            static char first_path_buf[256];
+            const char* sep = strchr(adsp_path, ';');
+            if (!sep) sep = strchr(adsp_path, ':');
+
+            if (sep) {
+                size_t len = sep - adsp_path;
+                if (len < sizeof(first_path_buf)) {
+                    strncpy(first_path_buf, adsp_path, len);
+                    first_path_buf[len] = '\0';
+                    first_path = first_path_buf;
+                }
+            } else {
+                first_path = adsp_path;
+            }
+        }
+
+        // Generate URI with absolute path if available
+        if (first_path && strlen(first_path) > 0) {
+            snprintf(htp_uri, sizeof(htp_uri),
+                     "file://%s/libggml-htp-v%u.so?htp_iface_skel_handle_invoke&_modver=1.0",
+                     first_path, opt_arch);
+            GGML_LOG_INFO("ggml-hex: using absolute HTP path: %s\n", htp_uri);
+        } else {
+            // Fallback to relative path (original behavior)
+            snprintf(htp_uri, sizeof(htp_uri),
+                     "file:///libggml-htp-v%u.so?htp_iface_skel_handle_invoke&_modver=1.0",
+                     opt_arch);
+            GGML_LOG_WARN("ggml-hex: ADSP_LIBRARY_PATH not set, using relative path\n");
+        }
 
         struct remote_rpc_get_uri u = {};
         u.session_id      = this->session_id;

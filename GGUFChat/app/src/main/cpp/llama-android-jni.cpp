@@ -337,26 +337,27 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // TEMPORARY: Disable Flash Attention to fix crash after 57 tokens
-    // Official config uses FA, but it causes ggml_abort in streaming mode
-    // TODO: investigate why FA crashes in streaming but not in llama-completion
-    ctx_params.n_ctx = 8192;              // Official: --ctx-size 8192
+    // CRITICAL: Conservative settings to prevent crash during context creation
+    // The newly compiled .so appears more strict about memory allocation
+    ctx_params.n_ctx = 2048;              // Reduced from 8192 to avoid memory issues
     ctx_params.n_batch = 128;             // Official: --batch-size 128
     ctx_params.n_ubatch = 128;            // Match n_batch
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention temporarily (crashes after ~57 tokens)
+    // DISABLE Flash Attention (crashes after ~57 tokens)
     ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
-    // KV cache offloading
-    ctx_params.offload_kqv = true;
+    // CRITICAL FIX: Disable KV cache offload to prevent SEGFAULT
+    // The crash at 0x8000002008 suggests memory allocation failure in context constructor
+    // This is likely related to KV cache initialization on NPU
+    ctx_params.offload_kqv = false;
 
-    LOGI("Context params (STABLE CONFIG - FA DISABLED for now):");
-    LOGI("  - Context size: %d", ctx_params.n_ctx);
+    LOGI("Context params (CONSERVATIVE CONFIG for new .so):");
+    LOGI("  - Context size: %d (reduced for stability)", ctx_params.n_ctx);
     LOGI("  - Batch size: %d", ctx_params.n_batch);
-    LOGI("  - Flash Attention: DISABLED (prevents crash)");
-    LOGI("  - KV cache offload: ENABLED");
+    LOGI("  - Flash Attention: DISABLED");
+    LOGI("  - KV cache offload: DISABLED (prevents SEGFAULT)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

@@ -1616,8 +1616,9 @@ void ggml_hexagon_session::allocate(int dev_id) noexcept(false) {
 
         // Generate URI with absolute path if available
         if (first_path && strlen(first_path) > 0) {
+            // FastRPC file:// URI format requires 4 slashes for absolute paths
             snprintf(htp_uri, sizeof(htp_uri),
-                     "file://%s/libggml-htp-v%u.so?htp_iface_skel_handle_invoke&_modver=1.0",
+                     "file:///%s/libggml-htp-v%u.so?htp_iface_skel_handle_invoke&_modver=1.0",
                      first_path, opt_arch);
             GGML_LOG_INFO("ggml-hex: using absolute HTP path: %s\n", htp_uri);
         } else {

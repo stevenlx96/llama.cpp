@@ -253,69 +253,40 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         }
     }
 
-    // 决定使用哪个设备
+    // Note: We use default model params, so backend selection is automatic
+    // Just log what's available for debugging
     LOGI("----------------------------------------");
-    ggml_backend_dev_t primary_dev = nullptr;
-    const char* backend_name = "Unknown";
-
     if (hexagon_dev) {
-        primary_dev = hexagon_dev;
-        backend_name = "Hexagon NPU";
-        LOGI("✓ Using Hexagon NPU as primary device");
-
-        // 获取 NPU 内存信息
+        LOGI("✓ Hexagon NPU detected");
         size_t npu_mem_free = 0, npu_mem_total = 0;
         ggml_backend_dev_memory(hexagon_dev, &npu_mem_free, &npu_mem_total);
         LOGI("  Memory: %.2f MB free / %.2f MB total",
              npu_mem_free / (1024.0 * 1024.0),
              npu_mem_total / (1024.0 * 1024.0));
-    } else if (cpu_dev) {
-        primary_dev = cpu_dev;
-        backend_name = "CPU";
-        LOGE("⚠ Hexagon NPU not available, falling back to CPU");
-        LOGE("  This is likely because HTP libraries are not accessible to DSP");
-    } else {
-        LOGE("❌ No usable backend found (neither NPU nor CPU)");
-        env->ReleaseStringUTFChars(modelPath, path);
-        return 0;
+    }
+    if (cpu_dev) {
+        LOGI("✓ CPU backend detected");
     }
 
     // 配置模型参数
     LOGI("----------------------------------------");
-    LOGI("Loading model with %s backend...", backend_name);
+    LOGI("Loading model...");
 
+    // CRITICAL: Use COMPLETELY DEFAULT params like official example!
+    // Official example does NOT modify any model params!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:62-67
     llama_model_params model_params = llama_model_default_params();
 
-    // FIXED: Header files updated to match .so version!
-    // The crash was caused by struct layout mismatch between old headers and new .so
-    // Now using auto device selection for proper NPU support
-    model_params.devices = nullptr;  // Let llama.cpp auto-select devices
-    LOGI("Device selection: AUTO (llama.cpp will configure available devices)");
-
-    // CRITICAL: Disable mmap (match official --no-mmap flag)
-    // Official Hexagon benchmark explicitly uses --no-mmap for best performance
-    model_params.use_mmap = false;
-    LOGI("Memory mapping: DISABLED (--no-mmap, matches official config)");
-
-    // CRITICAL: Enable extra buffer types for HTP0-REPACK!
-    // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
-    model_params.use_extra_bufts = true;
-    LOGI("Extra buffer types: ENABLED (for HTP0-REPACK weight repacking)");
-
-    // CRITICAL: Offload ALL layers to NPU/GPU!
-    model_params.n_gpu_layers = -1;
-
-    LOGI("Model params configured:");
-    LOGI("  - Primary device: %s", backend_name);
-    LOGI("  - Offloaded layers: ALL (n_gpu_layers = -1)");
-    LOGI("  - Extra buffers: ENABLED for NPU");
+    LOGI("Model params: COMPLETELY DEFAULT (auto device detection)");
+    LOGI("  - No manual configuration");
+    LOGI("  - Let llama.cpp auto-detect and configure everything");
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
-        LOGE("❌ Failed to load model on %s backend", backend_name);
+        LOGE("❌ Failed to load model");
         return 0;
     }
 
@@ -323,48 +294,35 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
     int32_t n_layer = llama_model_n_layer(model);
 
-    LOGI("✓ Model loaded successfully on %s", backend_name);
+    LOGI("✓ Model loaded successfully");
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
-    LOGI("  Requested offload: ALL layers (n_gpu_layers = -1)");
-
-    if (hexagon_dev) {
-        LOGI("  ⚠ Note: Check logs above for 'offloaded X/%d layers' message", n_layer);
-        LOGI("  ⚠ If not all layers offloaded, NPU performance will be poor!");
-    }
 
     // 创建 context
     LOGI("----------------------------------------");
     LOGI("Creating llama context...");
 
+    // CRITICAL: Match official example EXACTLY!
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
     llama_context_params ctx_params = llama_context_default_params();
 
-    // CRITICAL FIX: Default params have n_batch (2048) > n_ctx (512)!
-    // This causes memory overflow and SEGFAULT. Must set proper values.
-    // Official Hexagon config: --ctx-size 8192 --batch-size 128
-    ctx_params.n_ctx = 8192;              // Context size
-    ctx_params.n_batch = 128;             // Batch size (MUST be <= n_ctx)
-    ctx_params.n_ubatch = 128;            // Micro-batch size
+    // Official configuration
+    const int DEFAULT_CONTEXT_SIZE = 8192;
+    const int BATCH_SIZE = 512;  // Official uses 512, NOT 128!
+
+    ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
+    ctx_params.n_batch = BATCH_SIZE;
+    ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // DISABLE Flash Attention (crashes after ~57 tokens in old tests)
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    LOGI("Context params (OFFICIAL CONFIG):");
+    LOGI("  - n_ctx: %d", ctx_params.n_ctx);
+    LOGI("  - n_batch: %d", ctx_params.n_batch);
+    LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
+    LOGI("  - threads: %d", nThreads);
 
-    // KV cache offloading to NPU
-    ctx_params.offload_kqv = true;
-
-    LOGI("Context params (FIXED: batch <= ctx):");
-    LOGI("  - Context size: %d", ctx_params.n_ctx);
-    LOGI("  - Batch size: %d (MUST be <= n_ctx)", ctx_params.n_batch);
-    LOGI("  - Micro-batch: %d", ctx_params.n_ubatch);
-    LOGI("  - Threads: %d", nThreads);
-    LOGI("  - Flash Attention: DISABLED");
-    LOGI("  - KV cache offload: ENABLED");
-
-    LOGI("Calling llama_init_from_model...");
     llama_context* ctx = llama_init_from_model(model, ctx_params);
-    LOGI("llama_init_from_model returned: %p", (void*)ctx);
 
     if (!ctx) {
         LOGE("❌ Failed to create context");
@@ -372,17 +330,14 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         return 0;
     }
 
-    LOGI("✓ Context created");
-    LOGI("  Context size: %d tokens", ctx_params.n_ctx);
-    LOGI("  Threads: %d", ctx_params.n_threads);
+    LOGI("✓ Context created successfully");
 
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
 
     LOGI("========================================");
-    LOGI("✅ Initialization complete (%s)!", backend_name);
-    LOGI("✅ FIXED: Header files now match .so version!");
+    LOGI("✅ Initialization complete!");
     LOGI("========================================");
 
     return reinterpret_cast<jlong>(android_ctx);

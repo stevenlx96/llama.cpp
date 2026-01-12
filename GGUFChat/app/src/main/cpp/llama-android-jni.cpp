@@ -265,48 +265,34 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
-    // EXPERIMENT: Let llama.cpp auto-select devices instead of manual configuration
-    // Official docs use D=HTP0 parameter which lets llama.cpp auto-detect
-    // Maybe manual device list configuration is preventing HTP0-REPACK from being used?
-
-    // OPTION 1: Auto device selection (llama.cpp default logic)
-    // Leave model_params.devices = NULL (default)
-    // llama.cpp will automatically discover and configure devices
-
-    // OPTION 2: Manual NPU-only (no CPU in list)
-    // static ggml_backend_dev_t devices[2];
-    // if (hexagon_dev) {
-    //     devices[0] = hexagon_dev;
-    //     devices[1] = nullptr;
-    //     model_params.devices = devices;
-    //     LOGI("Device list: HTP0 only (manual)");
-    // }
-
-    // Using OPTION 1 for now
-    model_params.devices = nullptr;  // Let llama.cpp auto-select devices
-    LOGI("Device selection: AUTO (llama.cpp will use all available GPUs)");
+    // CRITICAL DEBUG: Force CPU-only to isolate NPU-related crashes
+    // The SEGFAULT during context creation persists even with conservative params
+    // Testing CPU-only to determine if the issue is NPU-specific or general
+    static ggml_backend_dev_t devices[2];
+    if (cpu_dev) {
+        devices[0] = cpu_dev;
+        devices[1] = nullptr;
+        model_params.devices = devices;
+        LOGI("Device list: CPU ONLY (debug mode - isolating NPU issues)");
+    } else {
+        model_params.devices = nullptr;
+        LOGI("Device selection: AUTO (no CPU device found)");
+    }
 
     // CRITICAL: Disable mmap (match official --no-mmap flag)
     // Official Hexagon benchmark explicitly uses --no-mmap for best performance
     model_params.use_mmap = false;
     LOGI("Memory mapping: DISABLED (--no-mmap, matches official config)");
 
-    // CRITICAL: Enable extra buffer types for HTP0-REPACK!
-    // Hexagon NPU uses HTP0-REPACK buffer type for weight repacking
-    // This is essential for NPU performance - without it, weights stay in CPU memory
-    model_params.use_extra_bufts = true;
-    LOGI("Extra buffer types: ENABLED (for HTP0-REPACK weight repacking)");
+    // Disable extra buffer types for CPU testing
+    model_params.use_extra_bufts = false;
+    LOGI("Extra buffer types: DISABLED (CPU testing mode)");
 
-    // CRITICAL FIX: Offload ALL layers to NPU/GPU!
-    // -1 means all layers (essential for good performance)
-    // Without this, only model weights are on NPU but computation stays on CPU!
-    // This was causing the 10x slowdown (CPU<->NPU data transfer overhead)
-    model_params.n_gpu_layers = -1;
+    // No GPU layers for CPU testing
+    model_params.n_gpu_layers = 0;
 
-    LOGI("Model params configured:");
-    LOGI("  - Primary device: %s", backend_name);
-    LOGI("  - Offloaded layers: ALL (n_gpu_layers = -1)");
-    LOGI("  - CPU fallback: %s", hexagon_dev ? "disabled (NPU only)" : "N/A (using CPU)");
+    LOGI("Model params configured (CPU TESTING MODE):");
+    LOGI("  - Primary device: CPU (debug)");
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);
@@ -321,15 +307,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
     int32_t n_layer = llama_model_n_layer(model);
 
-    LOGI("✓ Model loaded successfully on %s", backend_name);
+    LOGI("✓ Model loaded successfully (CPU TESTING MODE)");
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
-    LOGI("  Requested offload: ALL layers (n_gpu_layers = -1)");
-
-    if (hexagon_dev) {
-        LOGI("  ⚠ Note: Check logs above for 'offloaded X/%d layers' message", n_layer);
-        LOGI("  ⚠ If not all layers offloaded, NPU performance will be poor!");
-    }
+    LOGI("  GPU layers: 0 (CPU only for debug)");
 
     // 创建 context
     LOGI("----------------------------------------");
@@ -376,7 +357,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     android_ctx->ctx = ctx;
 
     LOGI("========================================");
-    LOGI("✅ Initialization complete (%s)!", backend_name);
+    LOGI("✅ Initialization complete (CPU DEBUG MODE)!");
+    LOGI("⚠ This is CPU-only to isolate NPU crash issues");
     LOGI("========================================");
 
     return reinterpret_cast<jlong>(android_ctx);

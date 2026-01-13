@@ -16,9 +16,12 @@
 void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
     (void) user_data;
 
-    // FILTER: Skip repack messages (too verbose, user request)
-    if (strstr(text, "repack:") != nullptr || strstr(text, "repack tensor") != nullptr) {
-        return;  // Silently ignore repack messages
+    // FILTER: Skip verbose messages (too much spam)
+    if (strstr(text, "repack:") != nullptr ||
+        strstr(text, "repack tensor") != nullptr ||
+        strstr(text, "load_tensors:") != nullptr ||
+        strstr(text, "create_tensor:") != nullptr) {
+        return;  // Silently ignore these verbose messages
     }
 
     // Map ggml log levels to Android log priorities

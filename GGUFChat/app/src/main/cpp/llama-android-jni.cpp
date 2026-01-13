@@ -238,10 +238,15 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
+    // CRITICAL: Create a static device array for model_params
+    // model_params.devices must point to a valid array during model loading
+    static ggml_backend_dev_t device_array[1];
+
     // CRITICAL: Explicitly specify Hexagon device if available
     if (hexagon_dev != nullptr) {
         LOGI("Configuring model to use Hexagon NPU");
-        model_params.devices = &hexagon_dev;
+        device_array[0] = hexagon_dev;
+        model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers
         LOGI("  - Device: Hexagon HTP");
         LOGI("  - GPU layers: 999 (all)");

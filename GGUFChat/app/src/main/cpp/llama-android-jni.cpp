@@ -212,21 +212,42 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_backend_init();
     LOGI("✓ llama backend initialized");
 
-    // NOTE: Official example does NOT enumerate backends here!
-    // We skip device enumeration to match official behavior exactly.
+    // Enumerate backends and find Hexagon
+    LOGI("----------------------------------------");
+    LOGI("Enumerating available backends...");
+
+    size_t n_devices = ggml_backend_dev_count();
+    LOGI("Found %zu backend devices", n_devices);
+
+    ggml_backend_dev_t hexagon_dev = nullptr;
+    for (size_t i = 0; i < n_devices; i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        const char* dev_name = ggml_backend_dev_name(dev);
+        LOGI("  Device %zu: %s", i, dev_name);
+
+        // Look for Hexagon device (name starts with "HTP")
+        if (strncmp(dev_name, "HTP", 3) == 0) {
+            hexagon_dev = dev;
+            LOGI("  ✓ Found Hexagon device: %s", dev_name);
+        }
+    }
 
     // 配置模型参数
     LOGI("----------------------------------------");
     LOGI("Loading model...");
 
-    // CRITICAL: Use COMPLETELY DEFAULT params like official example!
-    // Official example does NOT modify any model params!
-    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:62-67
     llama_model_params model_params = llama_model_default_params();
 
-    LOGI("Model params: COMPLETELY DEFAULT (auto device detection)");
-    LOGI("  - No manual configuration");
-    LOGI("  - Let llama.cpp auto-detect and configure everything");
+    // CRITICAL: Explicitly specify Hexagon device if available
+    if (hexagon_dev != nullptr) {
+        LOGI("Configuring model to use Hexagon NPU");
+        model_params.devices = &hexagon_dev;
+        model_params.n_gpu_layers = 999;  // Offload all layers
+        LOGI("  - Device: Hexagon HTP");
+        LOGI("  - GPU layers: 999 (all)");
+    } else {
+        LOGE("⚠ Hexagon device not found, using default (CPU)");
+    }
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);

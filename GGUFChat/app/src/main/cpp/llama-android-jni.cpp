@@ -17,12 +17,22 @@
 void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
     (void) user_data;
 
+    size_t len = strlen(text);
+
     // FILTER: Skip verbose messages (too much spam)
     if (strstr(text, "repack:") != nullptr ||
         strstr(text, "repack tensor") != nullptr ||
         strstr(text, "load_tensors:") != nullptr ||
         strstr(text, "create_tensor:") != nullptr) {
         return;  // Silently ignore these verbose messages
+    }
+
+    // FILTER: Skip progress dots
+    if (len == 2 && text[0] == '.' && text[1] == '\n') {
+        return;  // Silently ignore progress dots
+    }
+    if (len == 1 && text[0] == '.') {
+        return;  // Silently ignore progress dots
     }
 
     // Map ggml log levels to Android log priorities
@@ -46,7 +56,6 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     }
 
     // Remove trailing newline if present (logcat adds its own)
-    size_t len = strlen(text);
     if (len > 0 && text[len - 1] == '\n') {
         char * text_copy = strdup(text);
         text_copy[len - 1] = '\0';
@@ -183,22 +192,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
         JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
 
-    llama_log_set(ggml_log_callback_android, nullptr);
-    LOGI("Llama backend initializing...");
-
-    // 显式检查 Hexagon 注册
-    auto* reg = ggml_backend_hexagon_reg();
-    if (reg == nullptr) {
-        LOGE("FATAL: Hexagon backend registration failed!");
-    } else {
-        // 注意这里改成了 _dev_count
-        size_t dev_count = ggml_backend_reg_dev_count(reg);
-        LOGI("Hexagon backend registered, device count: %zu", dev_count);
-    }
-
-
-
-
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
 
@@ -234,6 +227,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     size_t n_devices = ggml_backend_dev_count();
     LOGI("Found %zu backend devices", n_devices);
+
+    if (n_devices != 2) {
+        LOGE("⚠️ WARNING: Expected 2 devices (HTP0 + CPU), but found %zu!", n_devices);
+        LOGE("This may indicate duplicate backend registration!");
+    }
 
     ggml_backend_dev_t hexagon_dev = nullptr;
     for (size_t i = 0; i < n_devices; i++) {
@@ -327,6 +325,14 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
 
     // 加载模型
+    LOGI("🔧 DEBUG: Calling llama_model_load_from_file with:");
+    LOGI("  - devices: %p", (void*)model_params.devices);
+    if (model_params.devices && model_params.devices[0]) {
+        LOGI("  - devices[0]: %s", ggml_backend_dev_name(model_params.devices[0]));
+        LOGI("  - devices[1]: %p (should be nullptr)", (void*)model_params.devices[1]);
+    }
+    LOGI("  - n_gpu_layers: %d", model_params.n_gpu_layers);
+
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 

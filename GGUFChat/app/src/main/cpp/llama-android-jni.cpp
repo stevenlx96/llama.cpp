@@ -368,6 +368,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
 
+    // 🔍 CRITICAL DEBUG: Check which backend the model weights are actually on
+    LOGI("----------------------------------------");
+    LOGI("🔍 DEBUG: Checking model tensor allocation...");
+
+    // Get model's internal structure to check tensor buffers
+    // This will tell us if tensors are on HTP or CPU backend
+    int htp_tensor_count = 0;
+    int cpu_tensor_count = 0;
+    int total_tensor_count = 0;
+
+    // We can't directly access internal tensors easily, but we can check
+    // the model description which should show buffer allocations
+    LOGI("  Model description would show buffer allocations");
+    LOGI("  (Detailed tensor inspection requires accessing model->impl)");
+
+    // Alternative: Check the model's device
+    // If model was loaded to HTP, we should see evidence in buffer names
+    LOGI("----------------------------------------");
+
     // CRITICAL: Check if layers were actually offloaded to NPU
     LOGI("----------------------------------------");
     LOGI("⚠️ OFFLOAD STATUS CHECK:");

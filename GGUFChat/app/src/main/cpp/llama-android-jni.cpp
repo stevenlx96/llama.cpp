@@ -210,6 +210,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_log_set(ggml_log_callback_android, nullptr);
 
+    // 🔍 DEBUG: Check backend count BEFORE any registration
+    size_t backends_before = ggml_backend_reg_count();
+    LOGI("🔍 DEBUG: Backend count BEFORE registration: %zu", backends_before);
+
     // 【关键修改 2】：只注册一次 Hexagon backend
     // CRITICAL: Register Hexagon ONLY ONCE to avoid duplicate backends
     // We use explicit registration instead of ggml_backend_load_all_from_path
@@ -217,9 +221,19 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ggml_backend_register(ggml_backend_hexagon_reg());
     LOGI("✓ Hexagon backend explicitly registered");
 
+    // 🔍 DEBUG: Check backend count AFTER Hexagon registration
+    size_t backends_after_hex = ggml_backend_reg_count();
+    LOGI("🔍 DEBUG: Backend count AFTER Hexagon registration: %zu (added %zu)",
+         backends_after_hex, backends_after_hex - backends_before);
+
     // Initialize llama backend (this will register CPU backend automatically)
     llama_backend_init();
     LOGI("✓ llama backend initialized (CPU backend auto-registered)");
+
+    // 🔍 DEBUG: Check backend count AFTER llama_backend_init
+    size_t backends_after_init = ggml_backend_reg_count();
+    LOGI("🔍 DEBUG: Backend count AFTER llama_backend_init: %zu (added %zu)",
+         backends_after_init, backends_after_init - backends_after_hex);
 
     // Enumerate backends and find Hexagon
     LOGI("----------------------------------------");

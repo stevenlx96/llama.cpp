@@ -23,12 +23,16 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     size_t len = strlen(text);
 
     // FILTER: Skip verbose messages (too much spam)
+    // CRITICAL: DO NOT filter "load_tensors" messages that contain important info!
+    // Only filter the verbose "repack" progress messages
     if (strstr(text, "repack:") != nullptr ||
         strstr(text, "repack tensor") != nullptr ||
-        strstr(text, "load_tensors:") != nullptr ||
         strstr(text, "create_tensor:") != nullptr) {
         return;  // Silently ignore these verbose messages
     }
+
+    // Allow important load_tensors messages through (offload, buffer size, REPACK)
+    // These are CRITICAL for debugging NPU usage!
 
     // FILTER: Skip progress dots
     if (len == 2 && text[0] == '.' && text[1] == '\n') {

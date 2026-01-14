@@ -216,14 +216,35 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("🔍 OpenCL Diagnostics - Attempting to load libOpenCL.so");
     LOGI("========================================");
 
+    // Check if device files exist
+    LOGI("🔍 Checking GPU device files:");
+    const char* gpu_devices[] = {
+        "/dev/kgsl-3d0",      // Adreno GPU device
+        "/dev/dri/renderD128", // DRM render device
+        "/dev/mali0",         // Mali GPU (for completeness)
+    };
+    for (const char* dev : gpu_devices) {
+        if (access(dev, R_OK | W_OK) == 0) {
+            LOGI("   ✅ %s is readable and writable", dev);
+        } else if (access(dev, F_OK) == 0) {
+            LOGE("   ❌ %s exists but NOT accessible (errno: %d - %s)", dev, errno, strerror(errno));
+        } else {
+            LOGI("   ⚠️  %s does not exist", dev);
+        }
+    }
+
     // Try to load OpenCL runtime library
+    LOGI("🔍 Attempting dlopen() for libOpenCL.so...");
     void* opencl_handle = dlopen("libOpenCL.so", RTLD_NOW | RTLD_GLOBAL);
     if (opencl_handle != nullptr) {
         LOGI("✅ SUCCESS: libOpenCL.so loaded via dlopen()");
 
         // Try to get clGetPlatformIDs function
         typedef int (*clGetPlatformIDs_t)(unsigned int, void*, unsigned int*);
+        typedef int (*clGetDeviceIDs_t)(void*, unsigned int, unsigned int, void*, unsigned int*);
+
         clGetPlatformIDs_t clGetPlatformIDs_fn = (clGetPlatformIDs_t)dlsym(opencl_handle, "clGetPlatformIDs");
+        clGetDeviceIDs_t clGetDeviceIDs_fn = (clGetDeviceIDs_t)dlsym(opencl_handle, "clGetDeviceIDs");
 
         if (clGetPlatformIDs_fn != nullptr) {
             LOGI("✅ clGetPlatformIDs function found in libOpenCL.so");
@@ -232,11 +253,36 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
             unsigned int num_platforms = 0;
             int result = clGetPlatformIDs_fn(0, nullptr, &num_platforms);
 
+            LOGI("🔍 clGetPlatformIDs() returned: %d", result);
+            LOGI("🔍 num_platforms: %u", num_platforms);
+
             if (result == 0) {  // CL_SUCCESS = 0
                 LOGI("✅ OpenCL query successful! Found %u OpenCL platform(s)", num_platforms);
+
+                if (num_platforms > 0 && clGetDeviceIDs_fn != nullptr) {
+                    // Try to get platform and query devices
+                    void* platform_id = nullptr;
+                    result = clGetPlatformIDs_fn(1, &platform_id, nullptr);
+                    if (result == 0 && platform_id != nullptr) {
+                        LOGI("✅ Got platform ID: %p", platform_id);
+
+                        // Try to get GPU devices (CL_DEVICE_TYPE_GPU = 4)
+                        unsigned int num_devices = 0;
+                        result = clGetDeviceIDs_fn(platform_id, 4, 0, nullptr, &num_devices);
+                        LOGI("🔍 clGetDeviceIDs(GPU) returned: %d, num_devices: %u", result, num_devices);
+                    }
+                }
             } else {
                 LOGE("❌ OpenCL query FAILED with error code: %d", result);
-                LOGE("   This means OpenCL library exists but GPU is not accessible");
+                LOGE("   Error code meanings:");
+                LOGE("   -1001 = CL_PLATFORM_NOT_FOUND_KHR (no OpenCL platforms)");
+                LOGE("   -1000 = CL_DEVICE_NOT_FOUND (no OpenCL devices)");
+                LOGE("   -30   = CL_INVALID_VALUE");
+                LOGE("   This usually means:");
+                LOGE("   1. GPU driver not loaded/accessible");
+                LOGE("   2. SELinux blocking GPU access");
+                LOGE("   3. App doesn't have GPU permissions");
+                LOGE("   4. OpenGL ES context not initialized");
             }
         } else {
             LOGE("❌ clGetPlatformIDs function NOT found in libOpenCL.so");
@@ -249,10 +295,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGE("❌ FAILED to load libOpenCL.so via dlopen()");
         LOGE("   dlerror: %s", dlerror());
         LOGE("   OpenCL GPU acceleration will NOT be available!");
-        LOGE("   Possible reasons:");
-        LOGE("   1. libOpenCL.so not present in /system/lib64/");
-        LOGE("   2. AndroidManifest.xml missing <uses-native-library>");
-        LOGE("   3. Device doesn't support OpenCL");
     }
     LOGI("========================================");
 

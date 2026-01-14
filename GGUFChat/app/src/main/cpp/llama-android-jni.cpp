@@ -260,8 +260,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // model_params.devices must point to a valid array during model loading
     static ggml_backend_dev_t device_array[1];
 
-    // CRITICAL: Explicitly specify Hexagon device if available
+    // CRITICAL: Test if Hexagon device is actually usable before using it
+    // Sometimes device is found but not fully initialized (dspqueue failure)
+    bool use_hexagon = false;
     if (hexagon_dev != nullptr) {
+        LOGI("Testing Hexagon device usability...");
+
+        // Try to get device description to verify it's actually usable
+        const char* dev_desc = ggml_backend_dev_description(hexagon_dev);
+        if (dev_desc && strlen(dev_desc) > 0) {
+            use_hexagon = true;
+            LOGI("  ✓ Hexagon device is usable");
+            LOGI("  Description: %s", dev_desc);
+        } else {
+            LOGE("  ✗ Hexagon device found but not usable (failed to get description)");
+            LOGE("  This usually means dspqueue or session initialization failed");
+            LOGE("  Falling back to CPU");
+        }
+    }
+
+    if (use_hexagon) {
         LOGI("Configuring model to use Hexagon NPU");
         device_array[0] = hexagon_dev;
         model_params.devices = device_array;
@@ -269,7 +287,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGI("  - Device: Hexagon HTP");
         LOGI("  - GPU layers: 999 (all)");
     } else {
-        LOGE("⚠ Hexagon device not found, using default (CPU)");
+        LOGI("⚠ Using CPU (Hexagon not available or not usable)");
     }
 
     // --- 修正后的 Backend Inspector 调试代码 ---

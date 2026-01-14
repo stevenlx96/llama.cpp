@@ -342,6 +342,13 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
 
+    // CRITICAL: Check if layers were actually offloaded to NPU
+    // This is the KEY indicator of whether Hexagon is working!
+    LOGI("----------------------------------------");
+    LOGI("⚠️ IMPORTANT: Check above for 'offloaded X/Y layers' message");
+    LOGI("If you don't see that message, NPU is NOT being used!");
+    LOGI("----------------------------------------");
+
     // 创建 context
     LOGI("----------------------------------------");
     LOGI("Creating llama context...");
@@ -375,6 +382,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     }
 
     LOGI("✓ Context created successfully");
+
+    // CRITICAL: Verify which backend is actually being used for inference
+    LOGI("----------------------------------------");
+    LOGI("Verifying active backends...");
+
+    // Get the backend buffer to see what's actually allocated
+    auto * backend_buffer = llama_get_buf(ctx);
+    if (backend_buffer) {
+        const char * buffer_name = ggml_backend_buffer_name(backend_buffer);
+        LOGI("  Context buffer backend: %s", buffer_name);
+
+        if (strstr(buffer_name, "HTP") != nullptr || strstr(buffer_name, "Hexagon") != nullptr) {
+            LOGI("  ✓ CONFIRMED: Using Hexagon NPU backend!");
+        } else {
+            LOGE("  ✗ WARNING: Not using Hexagon backend!");
+            LOGE("  Buffer name: %s", buffer_name);
+            LOGE("  This means NPU acceleration is NOT active!");
+        }
+    }
 
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
@@ -586,6 +612,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     }
 
     llama_sampler_free(sampler);
+
+    // CRITICAL: Synchronize to ensure all backend operations complete
+    // This is especially important for Hexagon to release resources properly
+    llama_synchronize(ctx);
+    LOGD("Backend synchronized after generation");
 
     // Calculate and log performance metrics
     auto gen_end_time = std::chrono::high_resolution_clock::now();
@@ -847,6 +878,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     }
 
     llama_sampler_free(sampler);
+
+    // CRITICAL: Synchronize to ensure all backend operations complete
+    // This is especially important for Hexagon to release resources properly
+    llama_synchronize(ctx);
+    LOGD("Backend synchronized after generation");
 
     // Calculate and log performance metrics
     auto gen_end_time = std::chrono::high_resolution_clock::now();

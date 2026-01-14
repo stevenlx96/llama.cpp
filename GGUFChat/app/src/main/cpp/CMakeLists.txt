@@ -71,6 +71,15 @@ target_link_libraries(llama-android PRIVATE
         atomic
 )
 
+# Try to find and link OpenCL (optional - for Adreno GPU acceleration)
+find_library(OPENCL_LIBRARY OpenCL)
+if(OPENCL_LIBRARY)
+    target_link_libraries(llama-android PRIVATE ${OPENCL_LIBRARY})
+    message(STATUS "✓ OpenCL library found: ${OPENCL_LIBRARY}")
+else()
+    message(STATUS "⚠ OpenCL library not found (GPU acceleration may be unavailable)")
+endif()
+
 # ============================================================================
 # Import Prebuilt Libraries
 # ============================================================================

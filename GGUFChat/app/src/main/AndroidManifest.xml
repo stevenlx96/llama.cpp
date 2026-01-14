@@ -29,6 +29,11 @@
         <uses-native-library android:name="libadsprpc.so" android:required="false" />
         <!-- required="false" 表示如果设备没有这些库，应用仍可安装（fallback到CPU） -->
 
+        <!-- ⭐ OpenCL: GPU 加速库声明 -->
+        <!-- libOpenCL.so: Qualcomm Adreno GPU OpenCL runtime -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libGLES_mali.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

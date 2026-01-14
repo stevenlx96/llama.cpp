@@ -215,15 +215,20 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("🔍 DEBUG: Backend count BEFORE registration: %zu", backends_before);
 
     // 【关键修改 2】：只注册一次 Hexagon backend
-    // CRITICAL: Register Hexagon ONLY ONCE to avoid duplicate backends
-    // We use explicit registration instead of ggml_backend_load_all_from_path
-    // to avoid loading libggml-hexagon.so twice
-    ggml_backend_register(ggml_backend_hexagon_reg());
-    LOGI("✓ Hexagon backend explicitly registered");
+    // Check if Hexagon is already registered (it might be auto-loaded by .so linking)
+    ggml_backend_reg_t existing_htp = ggml_backend_reg_by_name("HTP");
+    if (existing_htp != nullptr) {
+        LOGI("⚠️ Hexagon backend ALREADY registered (auto-loaded by .so)");
+        LOGI("   Skipping explicit registration to avoid duplicates");
+    } else {
+        // Register Hexagon if not already registered
+        ggml_backend_register(ggml_backend_hexagon_reg());
+        LOGI("✓ Hexagon backend explicitly registered");
+    }
 
     // 🔍 DEBUG: Check backend count AFTER Hexagon registration
     size_t backends_after_hex = ggml_backend_reg_count();
-    LOGI("🔍 DEBUG: Backend count AFTER Hexagon registration: %zu (added %zu)",
+    LOGI("🔍 DEBUG: Backend count AFTER Hexagon check/registration: %zu (added %zu)",
          backends_after_hex, backends_after_hex - backends_before);
 
     // Initialize llama backend (this will register CPU backend automatically)

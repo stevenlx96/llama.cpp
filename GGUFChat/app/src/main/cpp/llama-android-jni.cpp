@@ -214,8 +214,16 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     size_t backends_before = ggml_backend_reg_count();
     LOGI("🔍 DEBUG: Backend count BEFORE registration: %zu", backends_before);
 
-    // 【关键修改 2】：只注册一次 Hexagon backend
-    // Check if Hexagon is already registered (it might be auto-loaded by .so linking)
+    // Register OpenCL backend if not already registered
+    ggml_backend_reg_t existing_opencl = ggml_backend_reg_by_name("OpenCL");
+    if (existing_opencl != nullptr) {
+        LOGI("⚠️ OpenCL backend ALREADY registered (auto-loaded by .so)");
+    } else {
+        // OpenCL backend should auto-register via .so linking
+        LOGI("⚠️ OpenCL backend NOT found (should auto-register from libggml-opencl.so)");
+    }
+
+    // Register Hexagon backend if not already registered
     ggml_backend_reg_t existing_htp = ggml_backend_reg_by_name("HTP");
     if (existing_htp != nullptr) {
         LOGI("⚠️ Hexagon backend ALREADY registered (auto-loaded by .so)");
@@ -226,9 +234,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGI("✓ Hexagon backend explicitly registered");
     }
 
-    // 🔍 DEBUG: Check backend count AFTER Hexagon registration
+    // 🔍 DEBUG: Check backend count AFTER backend checks
     size_t backends_after_hex = ggml_backend_reg_count();
-    LOGI("🔍 DEBUG: Backend count AFTER Hexagon check/registration: %zu (added %zu)",
+    LOGI("🔍 DEBUG: Backend count AFTER backend checks: %zu (added %zu)",
          backends_after_hex, backends_after_hex - backends_before);
 
     // Initialize llama backend (this will register CPU backend automatically)
@@ -240,28 +248,38 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("🔍 DEBUG: Backend count AFTER llama_backend_init: %zu (added %zu)",
          backends_after_init, backends_after_init - backends_after_hex);
 
-    // Enumerate backends and find Hexagon
+    // Enumerate backends and find Hexagon/OpenCL
     LOGI("----------------------------------------");
     LOGI("Enumerating available backends...");
 
     size_t n_devices = ggml_backend_dev_count();
     LOGI("Found %zu backend devices", n_devices);
 
-    if (n_devices != 2) {
-        LOGE("⚠️ WARNING: Expected 2 devices (HTP0 + CPU), but found %zu!", n_devices);
-        LOGE("This may indicate duplicate backend registration!");
+    if (n_devices < 2) {
+        LOGE("⚠️ WARNING: Expected at least 2 devices (HTP0 + CPU), but found %zu!", n_devices);
     }
 
     ggml_backend_dev_t hexagon_dev = nullptr;
+    ggml_backend_dev_t opencl_dev = nullptr;
+
     for (size_t i = 0; i < n_devices; i++) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
         const char* dev_name = ggml_backend_dev_name(dev);
-        LOGI("  Device %zu: %s", i, dev_name);
+        const char* backend_name = ggml_backend_dev_backend_reg(dev) ?
+                                   ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev)) : "Unknown";
+
+        LOGI("  Device %zu: %s (Backend: %s)", i, dev_name, backend_name);
 
         // Look for Hexagon device (name starts with "HTP")
         if (strncmp(dev_name, "HTP", 3) == 0) {
             hexagon_dev = dev;
             LOGI("  ✓ Found Hexagon device: %s", dev_name);
+        }
+
+        // Look for OpenCL device (Adreno GPU)
+        if (strstr(dev_name, "Adreno") != nullptr || strcmp(backend_name, "OpenCL") == 0) {
+            opencl_dev = dev;
+            LOGI("  ✓ Found OpenCL device: %s", dev_name);
         }
     }
 

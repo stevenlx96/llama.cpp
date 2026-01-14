@@ -4,6 +4,8 @@
 #include <chrono>
 #include <android/log.h>
 #include <dlfcn.h>  // For dlopen/dlsym to load OpenCL dynamically
+#include <unistd.h> // For access(), R_OK, W_OK, F_OK
+#include <errno.h>  // For errno
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"

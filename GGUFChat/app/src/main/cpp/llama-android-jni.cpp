@@ -257,8 +257,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_model_params model_params = llama_model_default_params();
 
     // CRITICAL: Create a static device array for model_params
-    // model_params.devices must point to a valid array during model loading
-    static ggml_backend_dev_t device_array[1];
+    // model_params.devices must be a NULL-terminated array!
+    // This is why offloading wasn't working - we need 2 elements!
+    static ggml_backend_dev_t device_array[2];  // [0] = device, [1] = nullptr
 
     // CRITICAL: Test if Hexagon device is actually usable before using it
     // Sometimes device is found but not fully initialized (dspqueue failure)
@@ -282,10 +283,12 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     if (use_hexagon) {
         LOGI("Configuring model to use Hexagon NPU");
         device_array[0] = hexagon_dev;
+        device_array[1] = nullptr;  // NULL terminator - CRITICAL!
         model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers
         LOGI("  - Device: Hexagon HTP");
         LOGI("  - GPU layers: 999 (all)");
+        LOGI("  - Device array is NULL-terminated: YES");
     } else {
         LOGI("⚠ Using CPU (Hexagon not available or not usable)");
     }

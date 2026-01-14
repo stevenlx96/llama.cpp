@@ -6,6 +6,7 @@
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
+#include <stdlib.h>
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -179,36 +180,53 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
+
         JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
 
+    llama_log_set(ggml_log_callback_android, nullptr);
+    LOGI("Llama backend initializing...");
+
+    // 显式检查 Hexagon 注册
+    auto* reg = ggml_backend_hexagon_reg();
+    if (reg == nullptr) {
+        LOGE("FATAL: Hexagon backend registration failed!");
+    } else {
+        // 注意这里改成了 _dev_count
+        size_t dev_count = ggml_backend_reg_dev_count(reg);
+        LOGI("Hexagon backend registered, device count: %zu", dev_count);
+    }
+
+
+
+
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
+    const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
+
     LOGI("========================================");
     LOGI("🚀 GGUFChat Hexagon NPU Initialization");
     LOGI("========================================");
-    LOGI("Model path: %s", path);
-    LOGI("Threads: %d", nThreads);
 
-    // CRITICAL: Set custom log callback BEFORE llama_backend_init()
-    // This redirects BOTH ggml AND llama logs to Android logcat
-    // Using llama_log_set() instead of ggml_log_set() ensures we capture
-    // llama's own messages including "offloaded X/Y layers to GPU"
-    llama_log_set(ggml_log_callback_android, nullptr);
-    LOGI("✓ Android logcat callback installed for ggml and llama");
-
-    // CRITICAL FIX: Load all backend plugins BEFORE llama_backend_init()
-    // This is required for Hexagon NPU and other backends to work!
-    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:51
-    const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
-    if (lib_dir && strlen(lib_dir) > 0) {
-        LOGI("Loading all backends from: %s", lib_dir);
-        ggml_backend_load_all_from_path(lib_dir);
-        LOGI("✓ All backend plugins loaded");
-    } else {
-        LOGE("⚠ No library path provided, backends may not load correctly!");
+    // 【关键修改 1】：设置 DSP 环境变量
+    // 必须让 FastRPC 知道去哪里找 libggml_hexagon_skel.so
+    // lib_dir 通常是 /data/app/.../lib/arm64
+    if (lib_dir) {
+        std::string adsp_path = std::string(lib_dir) + ";/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp";
+        setenv("ADSP_LIBRARY_PATH", adsp_path.c_str(), 1);
+        LOGI("✓ ADSP_LIBRARY_PATH set to: %s", adsp_path.c_str());
     }
-    env->ReleaseStringUTFChars(libPath, lib_dir);
 
-    // 初始化 llama 后端
+    llama_log_set(ggml_log_callback_android, nullptr);
+
+    // 【关键修改 2】：在 llama_backend_init 前显式注册 Hexagon
+    // 这会触发 ggml-hexagon.cpp 中的 ggml_backend_hexagon_reg
+    ggml_backend_register(ggml_backend_hexagon_reg());
+    LOGI("✓ Hexagon backend explicitly registered");
+
+    // 原有的加载逻辑可以保留，作为补充
+    if (lib_dir && strlen(lib_dir) > 0) {
+        ggml_backend_load_all_from_path(lib_dir);
+    }
+
     llama_backend_init();
     LOGI("✓ llama backend initialized");
 
@@ -253,6 +271,41 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     } else {
         LOGE("⚠ Hexagon device not found, using default (CPU)");
     }
+
+    // --- 修正后的 Backend Inspector 调试代码 ---
+    LOGI("--- Backend Inspector Start ---");
+// 获取已注册后端的数量
+    size_t reg_count = ggml_backend_reg_count();
+    LOGI("Total registered backends: %zu", reg_count);
+
+    for (size_t i = 0; i < reg_count; ++i) {
+        // 获取后端句柄
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        const char* reg_name = ggml_backend_reg_name(reg);
+        size_t dev_count = ggml_backend_reg_dev_count(reg);
+
+        LOGI("Backend [%zu]: %s, Devices: %zu", i, reg_name, dev_count);
+
+        for (size_t j = 0; j < dev_count; ++j) {
+            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
+            if (dev == nullptr) {
+                LOGE("  ! Device [%zu] is NULL! This will cause crash.", j);
+                continue;
+            }
+
+            const char* dev_name = ggml_backend_dev_name(dev);
+            const char* dev_desc = ggml_backend_dev_description(dev);
+            LOGI("  - Device [%zu]: %s (%s)", j, dev_name, dev_desc);
+
+            // 测试会导致崩溃的那个函数
+            LOGI("  - Testing props for device [%zu]...", j);
+            ggml_backend_dev_props props;
+            ggml_backend_dev_get_props(dev, &props); // 如果崩在这里，我们就知道是哪个设备了
+            LOGI("  - Props OK for %s", dev_name);
+        }
+    }
+    LOGI("--- Backend Inspector End ---");
+
 
     // 加载模型
     llama_model* model = llama_model_load_from_file(path, model_params);

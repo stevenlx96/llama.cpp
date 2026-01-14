@@ -14,8 +14,8 @@ message(STATUS "========================================")
 # ============================================================================
 
 # CRITICAL: Use SAME flags as Docker build to ensure ABI compatibility!
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
 
 message(STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
 message(STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")

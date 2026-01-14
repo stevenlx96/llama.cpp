@@ -217,18 +217,16 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_log_set(ggml_log_callback_android, nullptr);
 
-    // 【关键修改 2】：在 llama_backend_init 前显式注册 Hexagon
-    // 这会触发 ggml-hexagon.cpp 中的 ggml_backend_hexagon_reg
+    // 【关键修改 2】：只注册一次 Hexagon backend
+    // CRITICAL: Register Hexagon ONLY ONCE to avoid duplicate backends
+    // We use explicit registration instead of ggml_backend_load_all_from_path
+    // to avoid loading libggml-hexagon.so twice
     ggml_backend_register(ggml_backend_hexagon_reg());
     LOGI("✓ Hexagon backend explicitly registered");
 
-    // 原有的加载逻辑可以保留，作为补充
-    if (lib_dir && strlen(lib_dir) > 0) {
-        ggml_backend_load_all_from_path(lib_dir);
-    }
-
+    // Initialize llama backend (this will register CPU backend automatically)
     llama_backend_init();
-    LOGI("✓ llama backend initialized");
+    LOGI("✓ llama backend initialized (CPU backend auto-registered)");
 
     // Enumerate backends and find Hexagon
     LOGI("----------------------------------------");
@@ -346,10 +344,30 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("  Total layers: %d", n_layer);
 
     // CRITICAL: Check if layers were actually offloaded to NPU
-    // This is the KEY indicator of whether Hexagon is working!
     LOGI("----------------------------------------");
-    LOGI("⚠️ IMPORTANT: Check above for 'offloaded X/Y layers' message");
-    LOGI("If you don't see that message, NPU is NOT being used!");
+    LOGI("⚠️ OFFLOAD STATUS CHECK:");
+
+    // Check if GPU offload is supported
+    bool gpu_offload_supported = llama_supports_gpu_offload();
+    LOGI("  GPU offload supported: %s", gpu_offload_supported ? "YES" : "NO");
+
+    if (!gpu_offload_supported) {
+        LOGE("  ❌ GPU offload NOT supported!");
+        LOGE("  This means llama.cpp cannot find any GPU-type backends!");
+        LOGE("  Checking backend types...");
+
+        // Debug: check what backend types are available
+        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            const char* dev_name = ggml_backend_dev_name(dev);
+            ggml_backend_dev_props props;
+            ggml_backend_dev_get_props(dev, &props);
+            LOGI("    Device %zu: %s, type=%d", i, dev_name, props.type);
+        }
+    } else {
+        LOGI("  ✓ GPU offload is supported!");
+        LOGI("  Check above for 'offloaded X/Y layers' message");
+    }
     LOGI("----------------------------------------");
 
     // 创建 context

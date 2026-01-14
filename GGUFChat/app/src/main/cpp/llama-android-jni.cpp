@@ -383,25 +383,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     LOGI("✓ Context created successfully");
 
-    // CRITICAL: Verify which backend is actually being used for inference
-    LOGI("----------------------------------------");
-    LOGI("Verifying active backends...");
-
-    // Get the backend buffer to see what's actually allocated
-    auto * backend_buffer = llama_get_buf(ctx);
-    if (backend_buffer) {
-        const char * buffer_name = ggml_backend_buffer_name(backend_buffer);
-        LOGI("  Context buffer backend: %s", buffer_name);
-
-        if (strstr(buffer_name, "HTP") != nullptr || strstr(buffer_name, "Hexagon") != nullptr) {
-            LOGI("  ✓ CONFIRMED: Using Hexagon NPU backend!");
-        } else {
-            LOGE("  ✗ WARNING: Not using Hexagon backend!");
-            LOGE("  Buffer name: %s", buffer_name);
-            LOGE("  This means NPU acceleration is NOT active!");
-        }
-    }
-
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;

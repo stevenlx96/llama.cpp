@@ -973,14 +973,23 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 
     LOGD("Tokenized to %d tokens", n_tokens);
 
-// Process prompt
-    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+// Process prompt in batches (critical for prompts larger than n_batch)
+    // This prevents crashes when prompt exceeds n_batch size (e.g., 355 tokens > 128 batch size)
+    int n_batch = llama_n_batch(ctx);
+    LOGD("Processing prompt in batches (n_batch=%d, n_tokens=%d)", n_batch, n_tokens);
 
-    if (llama_decode(ctx, batch) != 0) {
-        LOGE("Failed to decode prompt");
-        llama_sampler_free(sampler);
-        env->DeleteGlobalRef(g_callback_obj);
-        return env->NewStringUTF("Error: Failed to decode prompt");
+    for (int i = 0; i < n_tokens; i += n_batch) {
+        int n_eval = std::min(n_batch, n_tokens - i);
+        llama_batch batch = llama_batch_get_one(tokens.data() + i, n_eval);
+
+        if (llama_decode(ctx, batch) != 0) {
+            LOGE("Failed to decode prompt batch [%d-%d]", i, i + n_eval - 1);
+            llama_sampler_free(sampler);
+            env->DeleteGlobalRef(g_callback_obj);
+            return env->NewStringUTF("Error: Failed to decode prompt");
+        }
+
+        LOGD("Decoded prompt batch [%d-%d]", i, i + n_eval - 1);
     }
 
     LOGD("Prompt decoded, starting streaming generation");

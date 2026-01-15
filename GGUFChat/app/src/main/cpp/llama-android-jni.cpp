@@ -22,25 +22,109 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
 
     size_t len = strlen(text);
 
-    // FILTER: Skip verbose messages (too much spam)
-    // CRITICAL: DO NOT filter "load_tensors" messages that contain important info!
-    // Only filter the verbose "repack" progress messages
+    // ============================================================
+    // FILTER: Skip verbose/repetitive messages (reduce log spam)
+    // ============================================================
+
+    // FILTER 1: Skip repetitive layer assignment messages (28+ lines of spam)
+    if (strstr(text, "layer") != nullptr &&
+        strstr(text, "assigned to device") != nullptr) {
+        return;  // Skip "load_tensors: layer X assigned to device HTP0"
+    }
+
+    // FILTER 2: Skip repetitive KV cache layer messages (28+ lines of spam)
+    if (strstr(text, "llama_kv_cache: layer") != nullptr &&
+        strstr(text, "dev =") != nullptr) {
+        return;  // Skip "llama_kv_cache: layer X: dev = HTP0"
+    }
+
+    // FILTER 3: Skip verbose repack progress messages
     if (strstr(text, "repack:") != nullptr ||
         strstr(text, "repack tensor") != nullptr ||
         strstr(text, "create_tensor:") != nullptr) {
-        return;  // Silently ignore these verbose messages
+        return;  // Skip repack progress spam
     }
 
-    // Allow important load_tensors messages through (offload, buffer size, REPACK)
-    // These are CRITICAL for debugging NPU usage!
+    // FILTER 4: Skip individual control token debug messages (keep summary only)
+    if (strstr(text, "control token:") != nullptr &&
+        strstr(text, "is not marked as EOG") != nullptr) {
+        return;  // Skip individual control token warnings
+    }
 
-    // FILTER: Skip progress dots
+    // FILTER 5: Skip detailed model loader key-value pairs (too verbose)
+    if (strstr(text, "llama_model_loader: - kv") != nullptr ||
+        strstr(text, "llama_model_loader: - type") != nullptr) {
+        return;  // Skip individual KV pair dumps
+    }
+
+    // FILTER 6: Skip graph reserve debug messages
+    if (strstr(text, "graph_reserve:") != nullptr) {
+        return;  // Skip graph reservation details
+    }
+
+    // FILTER 7: Skip detailed print_info lines (keep summary only)
+    if (strstr(text, "print_info:") != nullptr &&
+        (strstr(text, "n_embd") != nullptr ||
+         strstr(text, "n_head") != nullptr ||
+         strstr(text, "n_expert") != nullptr ||
+         strstr(text, "rope") != nullptr ||
+         strstr(text, "f_norm") != nullptr ||
+         strstr(text, "f_clamp") != nullptr ||
+         strstr(text, "f_max_alibi") != nullptr ||
+         strstr(text, "f_logit") != nullptr ||
+         strstr(text, "f_attn") != nullptr ||
+         strstr(text, "n_rot") != nullptr ||
+         strstr(text, "n_swa") != nullptr ||
+         strstr(text, "is_swa") != nullptr ||
+         strstr(text, "n_gqa") != nullptr ||
+         strstr(text, "causal attn") != nullptr ||
+         strstr(text, "pooling type") != nullptr ||
+         strstr(text, "rope type") != nullptr ||
+         strstr(text, "freq_") != nullptr ||
+         strstr(text, "n_ctx_orig") != nullptr)) {
+        return;  // Skip verbose architecture details
+    }
+
+    // FILTER 8: Skip token-related verbose info
+    if (strstr(text, "EOG token        =") != nullptr ||
+        strstr(text, "FIM") != nullptr ||
+        strstr(text, "token to piece cache") != nullptr) {
+        return;  // Skip token detail spam
+    }
+
+    // FILTER 9: Skip backend enumeration spam
+    if (strstr(text, "llama_context: enumerating backends") != nullptr ||
+        strstr(text, "llama_context: backend_ptrs.size()") != nullptr ||
+        strstr(text, "llama_context: max_nodes") != nullptr ||
+        strstr(text, "llama_context: reserving") != nullptr ||
+        strstr(text, "llama_context: worst-case") != nullptr) {
+        return;  // Skip backend enumeration details
+    }
+
+    // FILTER 10: Skip async upload messages
+    if (strstr(text, "load_all_data:") != nullptr) {
+        return;  // Skip async upload details
+    }
+
+    // FILTER 11: Skip progress dots
     if (len == 2 && text[0] == '.' && text[1] == '\n') {
-        return;  // Silently ignore progress dots
+        return;  // Skip progress dots
     }
     if (len == 1 && text[0] == '.') {
-        return;  // Silently ignore progress dots
+        return;  // Skip progress dots
     }
+
+    // ============================================================
+    // ALLOW THROUGH: Critical diagnostic information
+    // ============================================================
+    // - load_tensors: offloaded X/Y layers
+    // - load_tensors: buffer size messages
+    // - load_tensors: warnings about tensor compatibility
+    // - Backend registration (ggml_backend_*_init)
+    // - OpenCL diagnostics
+    // - Errors and warnings
+    // - Final context creation summary
+    // ============================================================
 
     // Map ggml log levels to Android log priorities
     int android_priority;

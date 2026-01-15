@@ -8,6 +8,7 @@
 #include <errno.h>  // For errno
 #include <pthread.h> // For pthread_setaffinity_np (CPU affinity)
 #include <sched.h>   // For cpu_set_t, CPU_ZERO, CPU_SET
+#include <EGL/egl.h> // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
@@ -307,6 +308,117 @@ static bool set_cpu_affinity_performance_cores() {
     }
 }
 
+// ============================================================
+// EGL Context Initialization - Required for OpenCL on Android
+// ============================================================
+
+// Many Android devices (especially Qualcomm) require an EGL context
+// to be initialized before OpenCL can be used. This is a Qualcomm-specific
+// requirement where OpenCL shares resources with OpenGL ES.
+static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
+static EGLContext g_egl_context = EGL_NO_CONTEXT;
+static EGLSurface g_egl_surface = EGL_NO_SURFACE;
+
+static bool init_egl_for_opencl() {
+    LOGI("========================================");
+    LOGI("🔧 Initializing EGL Context for OpenCL");
+    LOGI("========================================");
+
+    // Get default display
+    g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (g_egl_display == EGL_NO_DISPLAY) {
+        LOGE("❌ eglGetDisplay failed: 0x%x", eglGetError());
+        return false;
+    }
+
+    // Initialize EGL
+    EGLint major, minor;
+    if (!eglInitialize(g_egl_display, &major, &minor)) {
+        LOGE("❌ eglInitialize failed: 0x%x", eglGetError());
+        return false;
+    }
+    LOGI("✅ EGL initialized: version %d.%d", major, minor);
+
+    // Choose config for OpenGL ES 3.0
+    const EGLint config_attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,  // Use pbuffer (offscreen)
+        EGL_BLUE_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_RED_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 0,
+        EGL_NONE
+    };
+
+    EGLConfig config;
+    EGLint num_configs;
+    if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &num_configs)) {
+        LOGE("❌ eglChooseConfig failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+
+    if (num_configs == 0) {
+        LOGE("❌ No suitable EGL config found");
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("✅ EGL config chosen");
+
+    // Create pbuffer surface (1x1 offscreen surface)
+    const EGLint surface_attribs[] = {
+        EGL_WIDTH, 1,
+        EGL_HEIGHT, 1,
+        EGL_NONE
+    };
+    g_egl_surface = eglCreatePbufferSurface(g_egl_display, config, surface_attribs);
+    if (g_egl_surface == EGL_NO_SURFACE) {
+        LOGE("❌ eglCreatePbufferSurface failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("✅ EGL pbuffer surface created");
+
+    // Create OpenGL ES 3.0 context
+    const EGLint context_attribs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,  // OpenGL ES 3.0
+        EGL_NONE
+    };
+    g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        LOGE("❌ eglCreateContext failed: 0x%x", eglGetError());
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        return false;
+    }
+    LOGI("✅ EGL context created (OpenGL ES 3.0)");
+
+    // Make context current
+    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+        LOGE("❌ eglMakeCurrent failed: 0x%x", eglGetError());
+        eglDestroyContext(g_egl_display, g_egl_context);
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        g_egl_context = EGL_NO_CONTEXT;
+        return false;
+    }
+
+    LOGI("✅ EGL context made current");
+    LOGI("========================================");
+    LOGI("✅ EGL initialization complete!");
+    LOGI("   OpenCL should now be able to access GPU");
+    LOGI("========================================");
+    return true;
+}
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL
@@ -338,6 +450,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     set_cpu_affinity_performance_cores();
 
     llama_log_set(ggml_log_callback_android, nullptr);
+
+    // 【关键修复】：初始化 EGL 上下文以启用 OpenCL
+    // Qualcomm Adreno GPU 要求先创建 OpenGL ES 上下文才能使用 OpenCL
+    init_egl_for_opencl();
 
     // 🔍 OPENCL DIAGNOSTICS: Try to load OpenCL library explicitly
     LOGI("========================================");

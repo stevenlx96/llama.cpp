@@ -69,6 +69,8 @@ target_link_libraries(llama-android PRIVATE
         log
         m
         atomic
+        EGL          # For EGL context (required for OpenCL on Qualcomm)
+        GLESv3       # For OpenGL ES 3.0 (required for OpenCL)
 )
 
 # Try to find and link OpenCL (optional - for Adreno GPU acceleration)

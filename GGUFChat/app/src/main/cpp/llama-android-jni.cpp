@@ -618,9 +618,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Official configuration
+    // Official configuration (matching official adb tool exactly)
     const int DEFAULT_CONTEXT_SIZE = 8192;
-    const int BATCH_SIZE = 512;  // Official uses 512, NOT 128!
+    const int BATCH_SIZE = 128;  // ✅ CRITICAL: Official tool uses 128 (confirmed via adb logs)
 
     ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
     ctx_params.n_batch = BATCH_SIZE;

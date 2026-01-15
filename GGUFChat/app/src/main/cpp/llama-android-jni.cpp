@@ -6,6 +6,8 @@
 #include <dlfcn.h>  // For dlopen/dlsym to load OpenCL dynamically
 #include <unistd.h> // For access(), R_OK, W_OK, F_OK
 #include <errno.h>  // For errno
+#include <pthread.h> // For pthread_setaffinity_np (CPU affinity)
+#include <sched.h>   // For cpu_set_t, CPU_ZERO, CPU_SET
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
@@ -276,6 +278,35 @@ void token_callback(const std::string& token) {
     }
 }
 
+// ============================================================
+// CPU Affinity Setup - Match official tool's --cpu-mask 0xfc
+// ============================================================
+
+// Set CPU affinity to use performance cores (cores 2-7 on Snapdragon 8 Elite)
+// This matches the official tool: --cpu-mask 0xfc --cpu-strict 1
+// 0xfc = binary 11111100 = cores 2-7 (6 performance cores)
+static bool set_cpu_affinity_performance_cores() {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+
+    // Enable cores 2-7 (performance cores on Snapdragon 8 Elite)
+    // Core 0-1: Efficiency cores (avoid)
+    // Core 2-7: Performance cores (use these)
+    for (int i = 2; i <= 7; i++) {
+        CPU_SET(i, &cpuset);
+    }
+
+    int result = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    if (result == 0) {
+        LOGI("✅ CPU affinity set to performance cores (2-7)");
+        return true;
+    } else {
+        LOGE("❌ Failed to set CPU affinity: errno=%d (%s)", errno, strerror(errno));
+        LOGE("   This may impact performance - threads may run on efficiency cores");
+        return false;
+    }
+}
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL
@@ -298,6 +329,13 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         setenv("ADSP_LIBRARY_PATH", adsp_path.c_str(), 1);
         LOGI("✓ ADSP_LIBRARY_PATH set to: %s", adsp_path.c_str());
     }
+
+    // 【关键优化】：设置 CPU affinity 到性能核心
+    // 官方工具使用 --cpu-mask 0xfc (cores 2-7) 以避免效率核心
+    LOGI("========================================");
+    LOGI("⚡ Setting CPU Affinity to Performance Cores");
+    LOGI("========================================");
+    set_cpu_affinity_performance_cores();
 
     llama_log_set(ggml_log_callback_android, nullptr);
 

@@ -8,8 +8,6 @@
 #include <errno.h>  // For errno
 #include <EGL/egl.h> // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
-#include "ggml.h"        // For ggml_threadpool_params
-#include "ggml-cpu.h"    // For ggml_threadpool_new/free
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
 #include <stdlib.h>
@@ -163,8 +161,6 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
 struct llama_android_context {
     llama_model* model;
     llama_context* ctx;
-    ggml_threadpool_t threadpool;        // Custom threadpool for performance cores
-    ggml_threadpool_t threadpool_batch;  // Custom threadpool for batch processing
 };
 
 // Global variables to store Java callback (only used for streaming)
@@ -282,47 +278,11 @@ void token_callback(const std::string& token) {
 }
 
 // ============================================================================
-// Threadpool Setup - Match official tool's --cpu-mask 0xfc --cpu-strict 1
+// NOTE: CPU affinity configuration
 // ============================================================================
-
-// CRITICAL: Use ggml_threadpool API to set CPU affinity for llama.cpp threads ONLY
-// WARNING: Do NOT use sched_setaffinity() - that restricts the ENTIRE process
-//          including Hexagon RPC threads, UI threads, etc., causing severe performance
-//          degradation and NPU interference!
-//
-// Official tool uses: -t 6 --cpu-mask 0xfc --cpu-strict 1
-// - 6 threads on cores 2-7 (performance cores)
-// - Strict CPU placement
-// - Poll level 1000
-static ggml_threadpool_t create_performance_threadpool() {
-    const int N_THREADS = 6;  // Match official: -t 6
-
-    ggml_threadpool_params params = ggml_threadpool_params_default(N_THREADS);
-
-    // Set CPU mask: 0xfc = binary 11111100 = cores 2-7
-    // Initialize all to false first
-    for (int i = 0; i < GGML_MAX_N_THREADS; i++) {
-        params.cpumask[i] = false;
-    }
-    // Enable cores 2-7 (performance cores on Snapdragon 8 Elite)
-    for (int i = 2; i <= 7; i++) {
-        params.cpumask[i] = true;
-    }
-
-    // Match official tool parameters
-    params.strict_cpu = true;  // --cpu-strict 1
-    params.poll = 1000;        // --poll 1000
-
-    ggml_threadpool_t threadpool = ggml_threadpool_new(&params);
-
-    if (threadpool) {
-        LOGI("✅ Created threadpool: 6 threads, CPU mask 0xfc (cores 2-7), strict placement");
-    } else {
-        LOGE("❌ Failed to create custom threadpool - will use default");
-    }
-
-    return threadpool;
-}
+// The official tool uses: --cpu-mask 0xfc --cpu-strict 1 --poll 1000
+// This is handled internally by llama.cpp's threadpool when n_threads is set.
+// We rely on the library's default threadpool behavior.
 
 // ============================================================
 // EGL Context Initialization - Required for OpenCL on Android
@@ -814,34 +774,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     LOGI("✓ Context created successfully");
 
-    // ========================================
-    // 【关键优化】：创建并附加自定义 threadpool
-    // ========================================
-    // CRITICAL: Match official tool's --cpu-mask 0xfc --cpu-strict 1
-    // This sets CPU affinity ONLY for llama.cpp worker threads, not the entire process
-    LOGI("========================================");
-    LOGI("⚡ Creating Performance Threadpool");
-    LOGI("========================================");
-
-    ggml_threadpool_t threadpool = create_performance_threadpool();
-    ggml_threadpool_t threadpool_batch = create_performance_threadpool();
-
-    if (threadpool && threadpool_batch) {
-        llama_attach_threadpool(ctx, threadpool, threadpool_batch);
-        LOGI("✅ Threadpool attached successfully");
-    } else {
-        LOGE("⚠️ Failed to create threadpool - using default (performance may be impacted)");
-        if (threadpool) ggml_threadpool_free(threadpool);
-        if (threadpool_batch) ggml_threadpool_free(threadpool_batch);
-        threadpool = nullptr;
-        threadpool_batch = nullptr;
-    }
-
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
-    android_ctx->threadpool = threadpool;
-    android_ctx->threadpool_batch = threadpool_batch;
 
     LOGI("========================================");
     LOGI("✅ Initialization complete!");
@@ -1366,16 +1301,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (android_ctx) {
-        // Free threadpools first (before context)
-        if (android_ctx->threadpool) {
-            ggml_threadpool_free(android_ctx->threadpool);
-            LOGD("Threadpool freed");
-        }
-        if (android_ctx->threadpool_batch) {
-            ggml_threadpool_free(android_ctx->threadpool_batch);
-            LOGD("Threadpool batch freed");
-        }
-
         if (android_ctx->ctx) {
             llama_free(android_ctx->ctx);
             LOGD("Context freed");

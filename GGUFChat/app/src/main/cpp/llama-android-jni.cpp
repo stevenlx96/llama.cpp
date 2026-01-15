@@ -454,9 +454,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_log_set(ggml_log_callback_android, nullptr);
 
-    // 【关键修复】：初始化 EGL 上下文以启用 OpenCL
-    // Qualcomm Adreno GPU 要求先创建 OpenGL ES 上下文才能使用 OpenCL
-    init_egl_for_opencl();
+    // 【TEMPORARILY DISABLED】：EGL 初始化导致崩溃
+    // TODO: 需要在 backend 初始化后才能安全地创建 EGL 上下文
+    // init_egl_for_opencl();
 
     // 🔍 OPENCL DIAGNOSTICS: Try to load OpenCL library explicitly
     LOGI("========================================");

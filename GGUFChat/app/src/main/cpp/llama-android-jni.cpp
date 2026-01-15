@@ -297,7 +297,9 @@ static bool set_cpu_affinity_performance_cores() {
         CPU_SET(i, &cpuset);
     }
 
-    int result = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    // Android uses sched_setaffinity instead of pthread_setaffinity_np
+    // 0 = current thread
+    int result = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
     if (result == 0) {
         LOGI("✅ CPU affinity set to performance cores (2-7)");
         return true;
@@ -425,6 +427,7 @@ JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
         JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
+    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
@@ -615,6 +618,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         }
     }
 
+    // Suppress unused variable warnings (reserved for future use)
+    (void)opencl_dev;
+
     // 配置模型参数
     LOGI("----------------------------------------");
     LOGI("Loading model...");
@@ -724,9 +730,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     // Get model's internal structure to check tensor buffers
     // This will tell us if tensors are on HTP or CPU backend
-    int htp_tensor_count = 0;
-    int cpu_tensor_count = 0;
-    int total_tensor_count = 0;
+    // int htp_tensor_count = 0;    // Reserved for future debugging
+    // int cpu_tensor_count = 0;    // Reserved for future debugging
+    // int total_tensor_count = 0;  // Reserved for future debugging
 
     // We can't directly access internal tensors easily, but we can check
     // the model description which should show buffer allocations
@@ -867,6 +873,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
         jfloat temperature,
         jfloat topP,
         jint topK) {
+    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
@@ -1046,6 +1053,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
         jfloat topP,
         jint topK,
         jobject tokenCallback) {
+    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
@@ -1254,7 +1262,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 // Only continue decoding if we haven't found end marker
         if (!found_end) {
 // Decode next token
-            batch = llama_batch_get_one(&new_token, 1);
+            llama_batch batch = llama_batch_get_one(&new_token, 1);
             if (llama_decode(ctx, batch) != 0) {
                 LOGE("Failed to decode token %d", i);
                 break;
@@ -1318,6 +1326,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 JNIEXPORT void JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
         JNIEnv* env, jobject thiz, jlong contextPtr) {
+    (void)env;   // Unused parameter (standard JNI pattern)
+    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (android_ctx) {

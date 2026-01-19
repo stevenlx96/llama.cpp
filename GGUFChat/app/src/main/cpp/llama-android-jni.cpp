@@ -638,13 +638,15 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     }
 
     // Configure device array based on available devices
-    // Match official tool: OpenCL first, then Hexagon
+    // CRITICAL FIX: Use ONLY Hexagon NPU (dual accelerators cause crashes)
+    // Official tool only uses Hexagon: --device HTP0
     int device_idx = 0;
 
-    if (use_opencl) {
-        LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
-        device_array[device_idx++] = opencl_dev;
-    }
+    // DISABLED: OpenCL causes deadlock when used with Hexagon
+    // if (use_opencl) {
+    //     LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
+    //     device_array[device_idx++] = opencl_dev;
+    // }
 
     if (use_hexagon) {
         LOGI("✓ Adding Hexagon NPU to device array at index %d", device_idx);
@@ -654,9 +656,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // NULL terminator - CRITICAL!
     device_array[device_idx] = nullptr;
 
-    if (use_opencl || use_hexagon) {
+    if (use_hexagon) {
         LOGI("========================================");
-        LOGI("Configuring model with multiple accelerators");
+        LOGI("Configuring model with Hexagon NPU");
         LOGI("========================================");
         model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers

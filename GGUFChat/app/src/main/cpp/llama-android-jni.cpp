@@ -638,27 +638,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     }
 
     // Configure device array based on available devices
-    // CRITICAL FIX: Use ONLY Hexagon NPU (dual accelerators cause crashes)
-    // Official tool only uses Hexagon: --device HTP0
+    // Goal: Use BOTH OpenCL GPU + Hexagon NPU simultaneously for maximum performance
     int device_idx = 0;
 
-    // DISABLED: OpenCL causes deadlock when used with Hexagon
-    // if (use_opencl) {
-    //     LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
-    //     device_array[device_idx++] = opencl_dev;
-    // }
-
+    // Try Hexagon first, then OpenCL (reverse order to test scheduling)
     if (use_hexagon) {
         LOGI("✓ Adding Hexagon NPU to device array at index %d", device_idx);
         device_array[device_idx++] = hexagon_dev;
     }
 
+    if (use_opencl) {
+        LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
+        device_array[device_idx++] = opencl_dev;
+    }
+
     // NULL terminator - CRITICAL!
     device_array[device_idx] = nullptr;
 
-    if (use_hexagon) {
+    if (use_hexagon || use_opencl) {
         LOGI("========================================");
-        LOGI("Configuring model with Hexagon NPU");
+        LOGI("Configuring model with dual accelerators");
         LOGI("========================================");
         model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers
@@ -666,12 +665,17 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         // CRITICAL: Match official tool --no-mmap flag
         model_params.use_mmap = false;
 
-        LOGI("Device configuration (matches official tool):");
+        // CRITICAL: Enable layer-based splitting for dual accelerator support
+        // This avoids the async operation deadlock between OpenCL and Hexagon
+        model_params.split_mode = LLAMA_SPLIT_MODE_LAYER;  // Split layers across devices
+
+        LOGI("Device configuration:");
         for (int i = 0; i < device_idx; i++) {
             LOGI("  [%d] %s", i, ggml_backend_dev_name(device_array[i]));
         }
         LOGI("  - GPU layers: 999 (all)");
         LOGI("  - use_mmap: false (matches official --no-mmap)");
+        LOGI("  - split_mode: LAYER (enables proper dual accelerator support)");
         LOGI("  - Device array is NULL-terminated: YES");
         LOGI("========================================");
     } else {

@@ -588,9 +588,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         }
     }
 
-    // Suppress unused variable warnings (reserved for future use)
-    (void)opencl_dev;
-
     // 配置模型参数
     LOGI("----------------------------------------");
     LOGI("Loading model...");
@@ -599,8 +596,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     // CRITICAL: Create a static device array for model_params
     // model_params.devices must be a NULL-terminated array!
-    // This is why offloading wasn't working - we need 2 elements!
-    static ggml_backend_dev_t device_array[2];  // [0] = device, [1] = nullptr
+    // We need 3 elements to support OpenCL + Hexagon + nullptr terminator
+    static ggml_backend_dev_t device_array[3];  // [0] = OpenCL, [1] = Hexagon, [2] = nullptr
+
+    // CRITICAL: Test if OpenCL device is actually usable
+    bool use_opencl = false;
+    if (opencl_dev != nullptr) {
+        LOGI("Testing OpenCL device (Adreno GPU) usability...");
+
+        const char* dev_desc = ggml_backend_dev_description(opencl_dev);
+        if (dev_desc && strlen(dev_desc) > 0) {
+            use_opencl = true;
+            LOGI("  ✓ OpenCL device is usable");
+            LOGI("  Description: %s", dev_desc);
+        } else {
+            LOGE("  ✗ OpenCL device found but not usable");
+            LOGE("  GPU acceleration will not be available");
+        }
+    } else {
+        LOGI("⚠ OpenCL device not found");
+    }
 
     // CRITICAL: Test if Hexagon device is actually usable before using it
     // Sometimes device is found but not fully initialized (dspqueue failure)
@@ -617,26 +632,48 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         } else {
             LOGE("  ✗ Hexagon device found but not usable (failed to get description)");
             LOGE("  This usually means dspqueue or session initialization failed");
-            LOGE("  Falling back to CPU");
         }
+    } else {
+        LOGI("⚠ Hexagon device not found");
+    }
+
+    // Configure device array based on available devices
+    // Match official tool: OpenCL first, then Hexagon
+    int device_idx = 0;
+
+    if (use_opencl) {
+        LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
+        device_array[device_idx++] = opencl_dev;
     }
 
     if (use_hexagon) {
-        LOGI("Configuring model to use Hexagon NPU");
-        device_array[0] = hexagon_dev;
-        device_array[1] = nullptr;  // NULL terminator - CRITICAL!
+        LOGI("✓ Adding Hexagon NPU to device array at index %d", device_idx);
+        device_array[device_idx++] = hexagon_dev;
+    }
+
+    // NULL terminator - CRITICAL!
+    device_array[device_idx] = nullptr;
+
+    if (use_opencl || use_hexagon) {
+        LOGI("========================================");
+        LOGI("Configuring model with multiple accelerators");
+        LOGI("========================================");
         model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers
 
         // CRITICAL: Match official tool --no-mmap flag
         model_params.use_mmap = false;
 
-        LOGI("  - Device: Hexagon HTP");
+        LOGI("Device configuration (matches official tool):");
+        for (int i = 0; i < device_idx; i++) {
+            LOGI("  [%d] %s", i, ggml_backend_dev_name(device_array[i]));
+        }
         LOGI("  - GPU layers: 999 (all)");
         LOGI("  - use_mmap: false (matches official --no-mmap)");
         LOGI("  - Device array is NULL-terminated: YES");
+        LOGI("========================================");
     } else {
-        LOGI("⚠ Using CPU (Hexagon not available or not usable)");
+        LOGI("⚠ Using CPU only (no accelerators available)");
     }
 
     // --- 修正后的 Backend Inspector 调试代码 ---

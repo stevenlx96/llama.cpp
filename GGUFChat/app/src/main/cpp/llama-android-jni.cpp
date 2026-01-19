@@ -27,11 +27,12 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     // FILTER: Skip verbose/repetitive messages (reduce log spam)
     // ============================================================
 
-    // FILTER 1: Skip repetitive layer assignment messages (28+ lines of spam)
-    if (strstr(text, "layer") != nullptr &&
-        strstr(text, "assigned to device") != nullptr) {
-        return;  // Skip "load_tensors: layer X assigned to device HTP0"
-    }
+    // FILTER 1: TEMPORARILY ENABLED - Show layer assignment for debugging
+    // We need to see which layers go to OpenCL vs Hexagon
+    // if (strstr(text, "layer") != nullptr &&
+    //     strstr(text, "assigned to device") != nullptr) {
+    //     return;  // Skip "load_tensors: layer X assigned to device HTP0"
+    // }
 
     // FILTER 2: Skip repetitive KV cache layer messages (28+ lines of spam)
     if (strstr(text, "llama_kv_cache: layer") != nullptr &&
@@ -575,6 +576,16 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
         LOGI("  Device %zu: %s (Backend: %s)", i, dev_name, backend_name);
 
+        // Get device properties to check capabilities
+        ggml_backend_dev_props props;
+        ggml_backend_dev_get_props(dev, &props);
+        const char* dev_desc = ggml_backend_dev_description(dev);
+
+        LOGI("    - Description: %s", dev_desc ? dev_desc : "N/A");
+        LOGI("    - Type: %d (0=CPU, 1=GPU, 2=GPU_FULL, 3=ACCEL)", props.type);
+        LOGI("    - Memory: async=%d, host_buffer=%d",
+             props.caps.async_copy, props.caps.host_buffer);
+
         // Look for Hexagon device (name starts with "HTP")
         if (strncmp(dev_name, "HTP", 3) == 0) {
             hexagon_dev = dev;
@@ -585,6 +596,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         if (strstr(dev_name, "Adreno") != nullptr || strcmp(backend_name, "OpenCL") == 0) {
             opencl_dev = dev;
             LOGI("  ✓ Found OpenCL device: %s", dev_name);
+            LOGI("    OpenCL device capabilities:");
+            LOGI("    - Type: %d (should be 1=GPU or 2=GPU_FULL)", props.type);
+            LOGI("    - Can offload: %s", (props.type >= 1 && props.type <= 2) ? "YES" : "NO");
         }
     }
 
@@ -743,23 +757,17 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("  Total layers: %d", n_layer);
 
     // 🔍 CRITICAL DEBUG: Check which backend the model weights are actually on
-    LOGI("----------------------------------------");
-    LOGI("🔍 DEBUG: Checking model tensor allocation...");
+    LOGI("========================================");
+    LOGI("🔍 BACKEND ALLOCATION ANALYSIS");
+    LOGI("========================================");
 
-    // Get model's internal structure to check tensor buffers
-    // This will tell us if tensors are on HTP or CPU backend
-    // int htp_tensor_count = 0;    // Reserved for future debugging
-    // int cpu_tensor_count = 0;    // Reserved for future debugging
-    // int total_tensor_count = 0;  // Reserved for future debugging
-
-    // We can't directly access internal tensors easily, but we can check
-    // the model description which should show buffer allocations
-    LOGI("  Model description would show buffer allocations");
-    LOGI("  (Detailed tensor inspection requires accessing model->impl)");
-
-    // Alternative: Check the model's device
-    // If model was loaded to HTP, we should see evidence in buffer names
-    LOGI("----------------------------------------");
+    // Check layer offload status from llama.cpp
+    // The layer assignment messages should have been printed above (we enabled them)
+    LOGI("NOTE: Check above for 'layer X assigned to device Y' messages");
+    LOGI("  - Layers assigned to 'Adreno (OpenCL)' = GPU acceleration");
+    LOGI("  - Layers assigned to 'HTP0' = Hexagon NPU acceleration");
+    LOGI("  - Layers assigned to 'CPU' = CPU fallback");
+    LOGI("========================================");
 
     // CRITICAL: Check if layers were actually offloaded to NPU
     LOGI("----------------------------------------");
@@ -1050,11 +1058,40 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     double tokens_per_sec = generation_token_count / gen_time_sec;
 
     LOGI("========================================");
-    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("⚡ PERFORMANCE STATS:");
     LOGI("  Generated tokens: %d", generation_token_count);
     LOGI("  Generation time: %.2f seconds", gen_time_sec);
     LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
     LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
+
+    // 🔍 CRITICAL DEBUG: Print backend usage statistics
+    LOGI("========================================");
+    LOGI("🔍 BACKEND USAGE STATISTICS:");
+    LOGI("========================================");
+
+    // Get performance statistics from llama.cpp
+    // This will show which backends were actually used during inference
+    struct llama_perf_context_data perf = llama_perf_context(ctx);
+
+    LOGI("📊 Context Performance:");
+    LOGI("  - Prompt eval time: %.2f ms", perf.t_p_eval_ms);
+    LOGI("  - Prompt eval count: %d", perf.n_p_eval);
+    LOGI("  - Token eval time: %.2f ms", perf.t_eval_ms);
+    LOGI("  - Token eval count: %d", perf.n_eval);
+    LOGI("  - Total time: %.2f ms", perf.t_p_eval_ms + perf.t_eval_ms);
+
+    if (perf.n_eval > 0) {
+        double avg_token_time = perf.t_eval_ms / perf.n_eval;
+        LOGI("  - Average per token: %.2f ms (%.2f tokens/s)",
+             avg_token_time, 1000.0 / avg_token_time);
+    }
+
+    LOGI("========================================");
+    LOGI("⚠️  If speed is still slow (<20 tokens/s):");
+    LOGI("   1. Check layer assignments above");
+    LOGI("   2. Verify OpenCL/Hexagon are actually used");
+    LOGI("   3. Check if all layers went to CPU instead");
     LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
@@ -1326,11 +1363,40 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     double tokens_per_sec = generation_token_count / gen_time_sec;
 
     LOGI("========================================");
-    LOGI("⚡ PERFORMANCE STATS (NPU):");
+    LOGI("⚡ PERFORMANCE STATS:");
     LOGI("  Generated tokens: %d", generation_token_count);
     LOGI("  Generation time: %.2f seconds", gen_time_sec);
     LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
     LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
+    LOGI("========================================");
+
+    // 🔍 CRITICAL DEBUG: Print backend usage statistics
+    LOGI("========================================");
+    LOGI("🔍 BACKEND USAGE STATISTICS:");
+    LOGI("========================================");
+
+    // Get performance statistics from llama.cpp
+    // This will show which backends were actually used during inference
+    struct llama_perf_context_data perf = llama_perf_context(ctx);
+
+    LOGI("📊 Context Performance:");
+    LOGI("  - Prompt eval time: %.2f ms", perf.t_p_eval_ms);
+    LOGI("  - Prompt eval count: %d", perf.n_p_eval);
+    LOGI("  - Token eval time: %.2f ms", perf.t_eval_ms);
+    LOGI("  - Token eval count: %d", perf.n_eval);
+    LOGI("  - Total time: %.2f ms", perf.t_p_eval_ms + perf.t_eval_ms);
+
+    if (perf.n_eval > 0) {
+        double avg_token_time = perf.t_eval_ms / perf.n_eval;
+        LOGI("  - Average per token: %.2f ms (%.2f tokens/s)",
+             avg_token_time, 1000.0 / avg_token_time);
+    }
+
+    LOGI("========================================");
+    LOGI("⚠️  If speed is still slow (<20 tokens/s):");
+    LOGI("   1. Check layer assignments above");
+    LOGI("   2. Verify OpenCL/Hexagon are actually used");
+    LOGI("   3. Check if all layers went to CPU instead");
     LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);

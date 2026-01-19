@@ -627,8 +627,13 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         device_array[1] = nullptr;  // NULL terminator - CRITICAL!
         model_params.devices = device_array;
         model_params.n_gpu_layers = 999;  // Offload all layers
+
+        // CRITICAL: Match official tool --no-mmap flag
+        model_params.use_mmap = false;
+
         LOGI("  - Device: Hexagon HTP");
         LOGI("  - GPU layers: 999 (all)");
+        LOGI("  - use_mmap: false (matches official --no-mmap)");
         LOGI("  - Device array is NULL-terminated: YES");
     } else {
         LOGI("⚠ Using CPU (Hexagon not available or not usable)");
@@ -758,11 +763,15 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
+    // CRITICAL: Match official tool -fa on flag (Flash Attention enabled)
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+
     LOGI("Context params (OFFICIAL CONFIG):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
+    LOGI("  - flash_attn: enabled (matches official -fa on)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

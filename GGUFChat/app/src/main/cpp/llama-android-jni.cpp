@@ -584,7 +584,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGI("    - Description: %s", dev_desc ? dev_desc : "N/A");
         LOGI("    - Type: %d (0=CPU, 1=GPU, 2=GPU_FULL, 3=ACCEL)", props.type);
         LOGI("    - Memory: async=%d, host_buffer=%d",
-             props.caps.async_copy, props.caps.host_buffer);
+             props.caps.async, props.caps.host_buffer);
 
         // Look for Hexagon device (name starts with "HTP")
         if (strncmp(dev_name, "HTP", 3) == 0) {

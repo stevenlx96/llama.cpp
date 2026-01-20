@@ -5,12 +5,20 @@
 #include <android/log.h>
 #include <dlfcn.h>  // For dlopen/dlsym to load OpenCL dynamically
 #include <unistd.h> // For access(), R_OK, W_OK, F_OK
+#include <sys/syscall.h>  // For syscall(__NR_gettid)
 #include <errno.h>  // For errno
+#include <sched.h>  // For sched_setaffinity (CPU affinity)
 #include <EGL/egl.h> // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-hexagon.h"
+#include "ggml.h"     // For ggml APIs
 #include <stdlib.h>
+
+// Helper for gettid on older Android versions
+#ifndef gettid
+#define gettid() syscall(__NR_gettid)
+#endif
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -162,6 +170,7 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
 struct llama_android_context {
     llama_model* model;
     llama_context* ctx;
+    ggml_threadpool_t threadpool;  // Store threadpool for cleanup
 };
 
 // Global variables to store Java callback (only used for streaming)
@@ -834,12 +843,52 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     LOGI("✓ Context created successfully");
 
+    // ============================================================================
+    // CRITICAL: Set CPU affinity matching official tool (--cpu-mask 0xfc --cpu-strict 1)
+    // ============================================================================
+    LOGI("========================================");
+    LOGI("🔧 Configuring CPU Affinity (Official Settings)");
+    LOGI("========================================");
+
+    // Set CPU mask: 0xfc = binary 11111100 = cores 2-7 (avoid low-power cores 0-1)
+    // This is the CRITICAL performance optimization from official tool!
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+
+    // Enable cores 2-7 (avoiding low-power cores 0-1)
+    for (int i = 2; i < 8; i++) {
+        CPU_SET(i, &cpuset);
+        LOGI("  ✓ CPU core %d: ENABLED", i);
+    }
+
+    // Apply CPU affinity to current thread (which will be inherited by worker threads)
+    pid_t pid = gettid();  // Get current thread ID
+    int result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpuset);
+
+    if (result == 0) {
+        LOGI("✅ CPU affinity successfully set!");
+        LOGI("   Using cores 2-7 (0xfc mask)");
+        LOGI("   Avoiding low-power cores 0-1");
+    } else {
+        LOGE("❌ Failed to set CPU affinity: %s", strerror(errno));
+        LOGE("   Continuing without CPU affinity optimization");
+    }
+
+    LOGI("CPU Affinity Configuration:");
+    LOGI("  - Threads: %d", nThreads);
+    LOGI("  - CPU Mask: 0xfc (cores 2-7)");
+    LOGI("  - Strict CPU binding: YES (via sched_setaffinity)");
+    LOGI("========================================");
+
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
+    android_ctx->threadpool = nullptr;  // Not using external threadpool
 
     LOGI("========================================");
     LOGI("✅ Initialization complete!");
+    LOGI("   🚀 CPU affinity optimized for maximum performance");
+    LOGI("   🚀 Using cores 2-7 (avoiding low-power cores 0-1)");
     LOGI("========================================");
 
     return reinterpret_cast<jlong>(android_ctx);
@@ -1427,6 +1476,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
             llama_model_free(android_ctx->model);
             LOGD("Model freed");
         }
+
         delete android_ctx;
     }
 

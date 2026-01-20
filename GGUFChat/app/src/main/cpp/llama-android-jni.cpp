@@ -420,290 +420,42 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGI("✓ ADSP_LIBRARY_PATH set to: %s", adsp_path.c_str());
     }
 
-    // NOTE: CPU affinity will be set via threadpool after context creation
-    // (see llama_attach_threadpool call below)
-
+    // Set log callback for llama.cpp
     llama_log_set(ggml_log_callback_android, nullptr);
 
-    // 【TEMPORARILY DISABLED】：EGL 初始化导致崩溃
-    // TODO: 需要在 backend 初始化后才能安全地创建 EGL 上下文
-    // init_egl_for_opencl();
-
-    // 🔍 OPENCL DIAGNOSTICS: Try to load OpenCL library explicitly
+    // CRITICAL: Initialize EGL context FIRST (required for OpenCL on Qualcomm Adreno GPU)
+    // This must be done before loading backends to allow OpenCL to detect GPU devices
     LOGI("========================================");
-    LOGI("🔍 OpenCL Diagnostics - Attempting to load libOpenCL.so");
+    LOGI("🔧 Initializing EGL Context for OpenCL");
     LOGI("========================================");
-
-    // Check if device files exist
-    LOGI("🔍 Checking GPU device files:");
-    const char* gpu_devices[] = {
-        "/dev/kgsl-3d0",      // Adreno GPU device
-        "/dev/dri/renderD128", // DRM render device
-        "/dev/mali0",         // Mali GPU (for completeness)
-    };
-    for (const char* dev : gpu_devices) {
-        if (access(dev, R_OK | W_OK) == 0) {
-            LOGI("   ✅ %s is readable and writable", dev);
-        } else if (access(dev, F_OK) == 0) {
-            LOGE("   ❌ %s exists but NOT accessible (errno: %d - %s)", dev, errno, strerror(errno));
-        } else {
-            LOGI("   ⚠️  %s does not exist", dev);
-        }
+    if (!init_egl_for_opencl()) {
+        LOGE("⚠️ EGL initialization failed - OpenCL GPU acceleration may not be available");
     }
 
-    // Try to load OpenCL runtime library
-    LOGI("🔍 Attempting dlopen() for libOpenCL.so...");
-    void* opencl_handle = dlopen("libOpenCL.so", RTLD_NOW | RTLD_GLOBAL);
-    if (opencl_handle != nullptr) {
-        LOGI("✅ SUCCESS: libOpenCL.so loaded via dlopen()");
-
-        // Try to get clGetPlatformIDs function
-        typedef int (*clGetPlatformIDs_t)(unsigned int, void*, unsigned int*);
-        typedef int (*clGetDeviceIDs_t)(void*, unsigned int, unsigned int, void*, unsigned int*);
-
-        clGetPlatformIDs_t clGetPlatformIDs_fn = (clGetPlatformIDs_t)dlsym(opencl_handle, "clGetPlatformIDs");
-        clGetDeviceIDs_t clGetDeviceIDs_fn = (clGetDeviceIDs_t)dlsym(opencl_handle, "clGetDeviceIDs");
-
-        if (clGetPlatformIDs_fn != nullptr) {
-            LOGI("✅ clGetPlatformIDs function found in libOpenCL.so");
-
-            // Try to query OpenCL platforms
-            unsigned int num_platforms = 0;
-            int result = clGetPlatformIDs_fn(0, nullptr, &num_platforms);
-
-            LOGI("🔍 clGetPlatformIDs() returned: %d", result);
-            LOGI("🔍 num_platforms: %u", num_platforms);
-
-            if (result == 0) {  // CL_SUCCESS = 0
-                LOGI("✅ OpenCL query successful! Found %u OpenCL platform(s)", num_platforms);
-
-                if (num_platforms > 0 && clGetDeviceIDs_fn != nullptr) {
-                    // Try to get platform and query devices
-                    void* platform_id = nullptr;
-                    result = clGetPlatformIDs_fn(1, &platform_id, nullptr);
-                    if (result == 0 && platform_id != nullptr) {
-                        LOGI("✅ Got platform ID: %p", platform_id);
-
-                        // Try to get GPU devices (CL_DEVICE_TYPE_GPU = 4)
-                        unsigned int num_devices = 0;
-                        result = clGetDeviceIDs_fn(platform_id, 4, 0, nullptr, &num_devices);
-                        LOGI("🔍 clGetDeviceIDs(GPU) returned: %d, num_devices: %u", result, num_devices);
-                    }
-                }
-            } else {
-                LOGE("❌ OpenCL query FAILED with error code: %d", result);
-                LOGE("   Error code meanings:");
-                LOGE("   -1001 = CL_PLATFORM_NOT_FOUND_KHR (no OpenCL platforms)");
-                LOGE("   -1000 = CL_DEVICE_NOT_FOUND (no OpenCL devices)");
-                LOGE("   -30   = CL_INVALID_VALUE");
-                LOGE("   This usually means:");
-                LOGE("   1. GPU driver not loaded/accessible");
-                LOGE("   2. SELinux blocking GPU access");
-                LOGE("   3. App doesn't have GPU permissions");
-                LOGE("   4. OpenGL ES context not initialized");
-            }
-        } else {
-            LOGE("❌ clGetPlatformIDs function NOT found in libOpenCL.so");
-            LOGE("   dlerror: %s", dlerror());
-        }
-
-        // Don't close the handle - keep it loaded for ggml-opencl to use
-        // dlclose(opencl_handle);
-    } else {
-        LOGE("❌ FAILED to load libOpenCL.so via dlopen()");
-        LOGE("   dlerror: %s", dlerror());
-        LOGE("   OpenCL GPU acceleration will NOT be available!");
-    }
+    // Load all backends from the native library directory (matches official example)
+    // This will automatically load and register all backend .so files:
+    // - libggml-opencl.so -> OpenCL backend
+    // - libggml-hexagon.so -> Hexagon (HTP) backend
+    // - etc.
     LOGI("========================================");
-
-    // 🔍 DEBUG: Check backend count BEFORE any registration
-    size_t backends_before = ggml_backend_reg_count();
-    LOGI("🔍 DEBUG: Backend count BEFORE registration: %zu", backends_before);
-
-    // Register OpenCL backend if not already registered
-    ggml_backend_reg_t existing_opencl = ggml_backend_reg_by_name("OpenCL");
-    if (existing_opencl != nullptr) {
-        LOGI("⚠️ OpenCL backend ALREADY registered (auto-loaded by .so)");
-    } else {
-        // OpenCL backend should auto-register via .so linking
-        LOGI("⚠️ OpenCL backend NOT found (should auto-register from libggml-opencl.so)");
-    }
-
-    // Register Hexagon backend if not already registered
-    ggml_backend_reg_t existing_htp = ggml_backend_reg_by_name("HTP");
-    if (existing_htp != nullptr) {
-        LOGI("⚠️ Hexagon backend ALREADY registered (auto-loaded by .so)");
-        LOGI("   Skipping explicit registration to avoid duplicates");
-    } else {
-        // Register Hexagon if not already registered
-        ggml_backend_register(ggml_backend_hexagon_reg());
-        LOGI("✓ Hexagon backend explicitly registered");
-    }
-
-    // 🔍 DEBUG: Check backend count AFTER backend checks
-    size_t backends_after_hex = ggml_backend_reg_count();
-    LOGI("🔍 DEBUG: Backend count AFTER backend checks: %zu (added %zu)",
-         backends_after_hex, backends_after_hex - backends_before);
+    LOGI("🔧 Loading all backends from: %s", lib_dir);
+    LOGI("========================================");
+    ggml_backend_load_all_from_path(lib_dir);
+    LOGI("✓ All backends loaded from directory");
 
     // Initialize llama backend (this will register CPU backend automatically)
     llama_backend_init();
-    LOGI("✓ llama backend initialized (CPU backend auto-registered)");
+    LOGI("✓ llama backend initialized");
 
-    // 🔍 DEBUG: Check backend count AFTER llama_backend_init
-    size_t backends_after_init = ggml_backend_reg_count();
-    LOGI("🔍 DEBUG: Backend count AFTER llama_backend_init: %zu (added %zu)",
-         backends_after_init, backends_after_init - backends_after_hex);
+    // Enumerate available backends (for diagnostic logging)
+    LOGI("========================================");
+    LOGI("📊 Backend Registration Summary");
+    LOGI("========================================");
 
-    // Enumerate backends and find Hexagon/OpenCL
-    LOGI("----------------------------------------");
-    LOGI("Enumerating available backends...");
-
-    size_t n_devices = ggml_backend_dev_count();
-    LOGI("Found %zu backend devices", n_devices);
-
-    if (n_devices < 2) {
-        LOGE("⚠️ WARNING: Expected at least 2 devices (HTP0 + CPU), but found %zu!", n_devices);
-    }
-
-    ggml_backend_dev_t hexagon_dev = nullptr;
-    ggml_backend_dev_t opencl_dev = nullptr;
-
-    for (size_t i = 0; i < n_devices; i++) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        const char* dev_name = ggml_backend_dev_name(dev);
-        const char* backend_name = ggml_backend_dev_backend_reg(dev) ?
-                                   ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev)) : "Unknown";
-
-        LOGI("  Device %zu: %s (Backend: %s)", i, dev_name, backend_name);
-
-        // Get device properties to check capabilities
-        ggml_backend_dev_props props;
-        ggml_backend_dev_get_props(dev, &props);
-        const char* dev_desc = ggml_backend_dev_description(dev);
-
-        LOGI("    - Description: %s", dev_desc ? dev_desc : "N/A");
-        LOGI("    - Type: %d (0=CPU, 1=GPU, 2=GPU_FULL, 3=ACCEL)", props.type);
-        LOGI("    - Memory: async=%d, host_buffer=%d",
-             props.caps.async, props.caps.host_buffer);
-
-        // Look for Hexagon device (name starts with "HTP")
-        if (strncmp(dev_name, "HTP", 3) == 0) {
-            hexagon_dev = dev;
-            LOGI("  ✓ Found Hexagon device: %s", dev_name);
-        }
-
-        // Look for OpenCL device (Adreno GPU)
-        if (strstr(dev_name, "Adreno") != nullptr || strcmp(backend_name, "OpenCL") == 0) {
-            opencl_dev = dev;
-            LOGI("  ✓ Found OpenCL device: %s", dev_name);
-            LOGI("    OpenCL device capabilities:");
-            LOGI("    - Type: %d (should be 1=GPU or 2=GPU_FULL)", props.type);
-            LOGI("    - Can offload: %s", (props.type >= 1 && props.type <= 2) ? "YES" : "NO");
-        }
-    }
-
-    // 配置模型参数
-    LOGI("----------------------------------------");
-    LOGI("Loading model...");
-
-    llama_model_params model_params = llama_model_default_params();
-
-    // CRITICAL: Create a static device array for model_params
-    // model_params.devices must be a NULL-terminated array!
-    // We need 3 elements to support OpenCL + Hexagon + nullptr terminator
-    static ggml_backend_dev_t device_array[3];  // [0] = OpenCL, [1] = Hexagon, [2] = nullptr
-
-    // CRITICAL: Test if OpenCL device is actually usable
-    bool use_opencl = false;
-    if (opencl_dev != nullptr) {
-        LOGI("Testing OpenCL device (Adreno GPU) usability...");
-
-        const char* dev_desc = ggml_backend_dev_description(opencl_dev);
-        if (dev_desc && strlen(dev_desc) > 0) {
-            use_opencl = true;
-            LOGI("  ✓ OpenCL device is usable");
-            LOGI("  Description: %s", dev_desc);
-        } else {
-            LOGE("  ✗ OpenCL device found but not usable");
-            LOGE("  GPU acceleration will not be available");
-        }
-    } else {
-        LOGI("⚠ OpenCL device not found");
-    }
-
-    // CRITICAL: Test if Hexagon device is actually usable before using it
-    // Sometimes device is found but not fully initialized (dspqueue failure)
-    bool use_hexagon = false;
-    if (hexagon_dev != nullptr) {
-        LOGI("Testing Hexagon device usability...");
-
-        // Try to get device description to verify it's actually usable
-        const char* dev_desc = ggml_backend_dev_description(hexagon_dev);
-        if (dev_desc && strlen(dev_desc) > 0) {
-            use_hexagon = true;
-            LOGI("  ✓ Hexagon device is usable");
-            LOGI("  Description: %s", dev_desc);
-        } else {
-            LOGE("  ✗ Hexagon device found but not usable (failed to get description)");
-            LOGE("  This usually means dspqueue or session initialization failed");
-        }
-    } else {
-        LOGI("⚠ Hexagon device not found");
-    }
-
-    // Configure device array based on available devices
-    // Goal: Use BOTH OpenCL GPU + Hexagon NPU simultaneously for maximum performance
-    int device_idx = 0;
-
-    // Try Hexagon first, then OpenCL (reverse order to test scheduling)
-    if (use_hexagon) {
-        LOGI("✓ Adding Hexagon NPU to device array at index %d", device_idx);
-        device_array[device_idx++] = hexagon_dev;
-    }
-
-    if (use_opencl) {
-        LOGI("✓ Adding OpenCL (Adreno GPU) to device array at index %d", device_idx);
-        device_array[device_idx++] = opencl_dev;
-    }
-
-    // NULL terminator - CRITICAL!
-    device_array[device_idx] = nullptr;
-
-    if (use_hexagon || use_opencl) {
-        LOGI("========================================");
-        LOGI("Configuring model with dual accelerators");
-        LOGI("========================================");
-        model_params.devices = device_array;
-        model_params.n_gpu_layers = 999;  // Offload all layers
-
-        // CRITICAL: Match official tool --no-mmap flag
-        model_params.use_mmap = false;
-
-        // CRITICAL: Enable layer-based splitting for dual accelerator support
-        // This avoids the async operation deadlock between OpenCL and Hexagon
-        model_params.split_mode = LLAMA_SPLIT_MODE_LAYER;  // Split layers across devices
-
-        LOGI("Device configuration:");
-        for (int i = 0; i < device_idx; i++) {
-            LOGI("  [%d] %s", i, ggml_backend_dev_name(device_array[i]));
-        }
-        LOGI("  - GPU layers: 999 (all)");
-        LOGI("  - use_mmap: false (matches official --no-mmap)");
-        LOGI("  - split_mode: LAYER (enables proper dual accelerator support)");
-        LOGI("  - Device array is NULL-terminated: YES");
-        LOGI("========================================");
-    } else {
-        LOGI("⚠ Using CPU only (no accelerators available)");
-    }
-
-    // --- 修正后的 Backend Inspector 调试代码 ---
-    LOGI("--- Backend Inspector Start ---");
-// 获取已注册后端的数量
     size_t reg_count = ggml_backend_reg_count();
     LOGI("Total registered backends: %zu", reg_count);
 
     for (size_t i = 0; i < reg_count; ++i) {
-        // 获取后端句柄
         ggml_backend_reg_t reg = ggml_backend_reg_get(i);
         const char* reg_name = ggml_backend_reg_name(reg);
         size_t dev_count = ggml_backend_reg_dev_count(reg);
@@ -713,32 +465,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         for (size_t j = 0; j < dev_count; ++j) {
             ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
             if (dev == nullptr) {
-                LOGE("  ! Device [%zu] is NULL! This will cause crash.", j);
+                LOGE("  ⚠️ Device [%zu] is NULL", j);
                 continue;
             }
 
             const char* dev_name = ggml_backend_dev_name(dev);
             const char* dev_desc = ggml_backend_dev_description(dev);
             LOGI("  - Device [%zu]: %s (%s)", j, dev_name, dev_desc);
-
-            // 测试会导致崩溃的那个函数
-            LOGI("  - Testing props for device [%zu]...", j);
-            ggml_backend_dev_props props;
-            ggml_backend_dev_get_props(dev, &props); // 如果崩在这里，我们就知道是哪个设备了
-            LOGI("  - Props OK for %s", dev_name);
         }
     }
-    LOGI("--- Backend Inspector End ---");
+    LOGI("========================================");
 
+    // Load model with default parameters (let llama.cpp choose backends automatically)
+    // This matches the official example approach
+    LOGI("----------------------------------------");
+    LOGI("Loading model...");
 
-    // 加载模型
-    LOGI("🔧 DEBUG: Calling llama_model_load_from_file with:");
-    LOGI("  - devices: %p", (void*)model_params.devices);
-    if (model_params.devices && model_params.devices[0]) {
-        LOGI("  - devices[0]: %s", ggml_backend_dev_name(model_params.devices[0]));
-        LOGI("  - devices[1]: %p (should be nullptr)", (void*)model_params.devices[1]);
-    }
-    LOGI("  - n_gpu_layers: %d", model_params.n_gpu_layers);
+    llama_model_params model_params = llama_model_default_params();
+    // NOTE: We don't set model_params.devices - llama.cpp will automatically
+    // select the best available backends (Hexagon NPU, OpenCL GPU, or CPU)
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
@@ -796,33 +541,29 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     }
     LOGI("----------------------------------------");
 
-    // 创建 context
+    // Create context with official parameters
+    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
     LOGI("----------------------------------------");
     LOGI("Creating llama context...");
 
-    // CRITICAL: Match official example EXACTLY!
-    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Official configuration (matching official adb tool exactly)
+    // Official configuration matching examples/llama.android
     const int DEFAULT_CONTEXT_SIZE = 8192;
-    const int BATCH_SIZE = 128;  // ✅ CRITICAL: Official tool uses 128 (confirmed via adb logs)
+    const int BATCH_SIZE = 512;  // Official example uses 512
 
     ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
     ctx_params.n_batch = BATCH_SIZE;
     ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
+    // NOTE: flash_attn_type is left as default (llama.cpp will decide)
 
-    // CRITICAL: Match official tool -fa on flag (Flash Attention enabled)
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
-
-    LOGI("Context params (OFFICIAL CONFIG):");
+    LOGI("Context params (matching official example):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
-    LOGI("  - flash_attn: enabled (matches official -fa on)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

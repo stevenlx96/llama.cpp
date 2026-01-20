@@ -432,6 +432,62 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGE("⚠️ EGL initialization failed - OpenCL GPU acceleration may not be available");
     }
 
+    // CRITICAL: Pre-load OpenCL library with RTLD_GLOBAL before loading backends
+    // This ensures OpenCL symbols are globally available when libggml-opencl.so loads
+    LOGI("========================================");
+    LOGI("🔍 OpenCL Diagnostics - Pre-loading libOpenCL.so");
+    LOGI("========================================");
+
+    void* opencl_handle = dlopen("libOpenCL.so", RTLD_NOW | RTLD_GLOBAL);
+    if (opencl_handle != nullptr) {
+        LOGI("✅ SUCCESS: libOpenCL.so loaded via dlopen()");
+
+        // Try to get clGetPlatformIDs function to test OpenCL availability
+        typedef int (*clGetPlatformIDs_t)(unsigned int, void*, unsigned int*);
+        clGetPlatformIDs_t clGetPlatformIDs_fn = (clGetPlatformIDs_t)dlsym(opencl_handle, "clGetPlatformIDs");
+
+        if (clGetPlatformIDs_fn != nullptr) {
+            LOGI("✅ clGetPlatformIDs function found in libOpenCL.so");
+
+            // Try to query OpenCL platforms
+            unsigned int num_platforms = 0;
+            int result = clGetPlatformIDs_fn(0, nullptr, &num_platforms);
+
+            if (result == 0) {  // CL_SUCCESS = 0
+                if (num_platforms > 0) {
+                    LOGI("✅ OpenCL query successful! Found %u OpenCL platform(s)", num_platforms);
+                    LOGI("   OpenCL GPU acceleration should be available");
+                } else {
+                    LOGE("⚠️ OpenCL query returned 0 platforms");
+                    LOGE("   GPU is not accessible via OpenCL on this device");
+                }
+            } else {
+                LOGE("❌ OpenCL query FAILED with error code: %d", result);
+                LOGE("   This means OpenCL library exists but GPU is not accessible");
+                LOGE("   Possible reasons:");
+                LOGE("   1. Device doesn't support OpenCL");
+                LOGE("   2. GPU drivers don't expose OpenCL interface");
+                LOGE("   3. SELinux policies blocking GPU access");
+            }
+        } else {
+            LOGE("❌ clGetPlatformIDs function NOT found in libOpenCL.so");
+            LOGE("   dlerror: %s", dlerror());
+        }
+
+        // CRITICAL: Keep the handle open! Don't call dlclose()
+        // ggml-opencl.so needs these symbols to be globally available
+        LOGI("✅ libOpenCL.so kept loaded with RTLD_GLOBAL for ggml-opencl.so");
+    } else {
+        LOGE("❌ FAILED to load libOpenCL.so via dlopen()");
+        LOGE("   dlerror: %s", dlerror());
+        LOGE("   OpenCL GPU acceleration will NOT be available!");
+        LOGE("   Possible reasons:");
+        LOGE("   1. libOpenCL.so not present in /system/lib64/ or /vendor/lib64/");
+        LOGE("   2. Device doesn't have OpenCL support");
+        LOGE("   Will fall back to Hexagon NPU or CPU");
+    }
+    LOGI("========================================");
+
     // Load all backends from the native library directory (matches official example)
     // This will automatically load and register all backend .so files:
     // - libggml-opencl.so -> OpenCL backend

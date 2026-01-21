@@ -41,9 +41,10 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // ⭐ Deploy HTP libraries for Hexagon NPU support
-        // This must happen BEFORE loading any models
-        HexagonHtpDeployer.deployHtpLibraries(this)
+        // ⭐ HTP libraries deployment is NO LONGER NEEDED
+        // HTP libraries in jniLibs/arm64-v8a/ are automatically installed to nativeLibDir
+        // DSP can access nativeLibDir directly via ADSP_LIBRARY_PATH
+        // HexagonHtpDeployer.deployHtpLibraries(this)  // DISABLED - not needed!
 
         val modelsDir = getExternalFilesDir("models")?.absolutePath ?: return
         modelManager = ModelManager(modelsDir)

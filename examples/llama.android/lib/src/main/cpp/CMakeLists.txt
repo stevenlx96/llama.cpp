@@ -53,4 +53,5 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         llama
         common
         android
-        log)
+        log
+        EGL)

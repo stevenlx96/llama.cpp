@@ -14,8 +14,8 @@ message(STATUS "========================================")
 # ============================================================================
 
 # CRITICAL: Use SAME flags as Docker build to ensure ABI compatibility!
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
 
 message(STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
 message(STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")
@@ -38,6 +38,7 @@ message(STATUS "Include dir: ${INCLUDE_DIR}")
 set(REQUIRED_LIBS
         "libggml-base.so"
         "libggml-cpu.so"
+        "libggml-opencl.so"
         "libggml-hexagon.so"
         "libggml-htp-v73.so"
         "libggml-htp-v75.so"
@@ -68,7 +69,18 @@ target_link_libraries(llama-android PRIVATE
         log
         m
         atomic
+        EGL          # For EGL context (required for OpenCL on Qualcomm)
+        GLESv3       # For OpenGL ES 3.0 (required for OpenCL)
 )
+
+# Try to find and link OpenCL (optional - for Adreno GPU acceleration)
+find_library(OPENCL_LIBRARY OpenCL)
+if(OPENCL_LIBRARY)
+    target_link_libraries(llama-android PRIVATE ${OPENCL_LIBRARY})
+    message(STATUS "✓ OpenCL library found: ${OPENCL_LIBRARY}")
+else()
+    message(STATUS "⚠ OpenCL library not found (GPU acceleration may be unavailable)")
+endif()
 
 # ============================================================================
 # Import Prebuilt Libraries
@@ -87,6 +99,13 @@ set_target_properties(ggml_cpu_prebuilt PROPERTIES
         INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
 )
 
+# ggml-opencl
+add_library(ggml_opencl_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_opencl_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-opencl.so"
+        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
+)
+
 # ggml-hexagon
 add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(ggml_hexagon_prebuilt PROPERTIES
@@ -98,14 +117,14 @@ set_target_properties(ggml_hexagon_prebuilt PROPERTIES
 add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(ggml_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_opencl_prebuilt;ggml_hexagon_prebuilt"
 )
 
 # llama
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
+        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_opencl_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
 )
 
 target_link_libraries(llama-android PRIVATE llama_prebuilt)

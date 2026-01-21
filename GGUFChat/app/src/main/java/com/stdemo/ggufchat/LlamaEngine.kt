@@ -85,23 +85,10 @@ class GGUFChatEngine {
                 nativeLibraryPath = nativeLibDir
 
                 try {
-                    // Get HTP deployment directory - need to get app context again
-                    val htpDir = try {
-                        val clazz = Class.forName("android.app.ActivityThread")
-                        val method = clazz.getDeclaredMethod("currentApplication")
-                        val currentApp = method.invoke(null) as? android.app.Application
-                        currentApp?.let { HexagonHtpDeployer.getHtpDeploymentPath(it) } ?: ""
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not get HTP deployment path: ${e.message}")
-                        ""
-                    }
-
-                    // Include HTP deployment directory in search path
-                    val adspPath = if (htpDir.isNotEmpty()) {
-                        "$htpDir;$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
-                    } else {
-                        "$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
-                    }
+                    // CRITICAL FIX: Use nativeLibDir directly instead of deploying to filesDir
+                    // HTP libraries are in jniLibs/arm64-v8a/ and automatically installed to nativeLibDir
+                    // The DSP can access nativeLibDir but NOT filesDir (/data/user/0/.../files/)
+                    val adspPath = "$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
 
                     android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
                     android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
@@ -116,10 +103,9 @@ class GGUFChatEngine {
                     // CRITICAL: Disable repack verbose logging (user request)
                     android.system.Os.setenv("GGML_LOG_DISABLE_LOGS", "1", true)
 
-                    Log.d(TAG, "NPU search path successfully injected:")
-                    Log.d(TAG, "  HTP deployment: $htpDir")
-                    Log.d(TAG, "  Native lib: $nativeLibDir")
-                    Log.d(TAG, "  Full path: $adspPath")
+                    Log.d(TAG, "NPU search path successfully configured:")
+                    Log.d(TAG, "  Native lib dir: $nativeLibDir")
+                    Log.d(TAG, "  ADSP_LIBRARY_PATH: $adspPath")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to set environment variables", e)
                 }

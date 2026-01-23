@@ -25,10 +25,14 @@ struct Slot {
  */
 struct PredictionResult {
     std::string text;                    // Original input text
-    std::string intent;                  // Predicted intent label
+    bool hit;                            // True if confidence >= threshold
+    std::string intent;                  // Predicted intent label (empty if !hit)
     float intent_confidence;             // Confidence score [0, 1]
-    std::vector<Slot> slots;             // Extracted slots
+    std::vector<Slot> slots;             // Extracted slots (empty if !hit)
     std::vector<std::string> slot_tags;  // BIO tags for each character
+
+    // Debug info (always populated regardless of hit)
+    std::string raw_intent;              // Raw predicted intent (for debugging)
 };
 
 /**
@@ -39,6 +43,7 @@ struct IntentConfig {
     int max_seq_len = 64;                // Maximum sequence length
     bool use_gpu = false;                // Use GPU acceleration if available
     int num_threads = 4;                 // Number of CPU threads
+    float confidence_threshold = 0.6f;   // Minimum confidence for intent "hit" (default: 0.6)
 
     // File names (can be overridden)
     std::string model_file = "joint_model_quantized.onnx";
@@ -95,6 +100,18 @@ public:
      */
     const std::vector<std::string>& get_slot_labels() const { return slot_labels_; }
 
+    /**
+     * Set confidence threshold for intent matching
+     * @param threshold Minimum confidence [0, 1] to consider intent as "hit"
+     */
+    void set_threshold(float threshold) { config_.confidence_threshold = threshold; }
+
+    /**
+     * Get current confidence threshold
+     * @return Current threshold value
+     */
+    float get_threshold() const { return config_.confidence_threshold; }
+
 private:
     // Internal implementation (PIMPL pattern to hide ONNX Runtime dependencies)
     class Impl;
@@ -121,8 +138,10 @@ private:
 
 /**
  * Utility function to print prediction result
+ * @param result Prediction result
+ * @param show_debug If true, show debug info (raw intent) even when !hit
  */
-void print_result(const PredictionResult& result);
+void print_result(const PredictionResult& result, bool show_debug = false);
 
 } // namespace intent
 

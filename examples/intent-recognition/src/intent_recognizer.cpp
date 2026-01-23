@@ -397,8 +397,15 @@ PredictionResult IntentRecognizer::predict(const std::string& text) {
         size_t intent_idx = std::distance(intent_logits,
             std::max_element(intent_logits, intent_logits + intent_size));
 
-        result.intent = intent_labels_[intent_idx];
-        result.intent_confidence = intent_logits[intent_idx];
+        // Store raw intent and confidence
+        std::string raw_intent = intent_labels_[intent_idx];
+        float confidence = intent_logits[intent_idx];
+
+        result.raw_intent = raw_intent;
+        result.intent_confidence = confidence;
+
+        // Check if confidence meets threshold
+        result.hit = (confidence >= config_.confidence_threshold);
 
         // Process slot output
         float* slot_logits = output_tensors[1].GetTensorMutableData<float>();
@@ -424,7 +431,15 @@ PredictionResult IntentRecognizer::predict(const std::string& text) {
         }
 
         result.slot_tags = slot_tags;
-        result.slots = extract_slots(chars, slot_tags);
+
+        // Only populate intent and slots if hit
+        if (result.hit) {
+            result.intent = raw_intent;
+            result.slots = extract_slots(chars, slot_tags);
+        } else {
+            result.intent = "";  // Empty when not hit
+            result.slots.clear();  // No slots when not hit
+        }
 
     } catch (const Ort::Exception& e) {
         std::cerr << "ONNX inference error: " << e.what() << std::endl;
@@ -433,43 +448,38 @@ PredictionResult IntentRecognizer::predict(const std::string& text) {
     return result;
 }
 
-void print_result(const PredictionResult& result) {
-    std::cout << std::string(50, '=') << std::endl;
+void print_result(const PredictionResult& result, bool show_debug) {
+    std::cout << std::string(60, '=') << std::endl;
     std::cout << "Input: " << result.text << std::endl;
-    std::cout << std::string(50, '-') << std::endl;
-    std::cout << "Intent: " << result.intent
-              << " (confidence: " << (result.intent_confidence * 100.0f) << "%)" << std::endl;
-    std::cout << std::string(50, '-') << std::endl;
+    std::cout << std::string(60, '-') << std::endl;
 
-    if (!result.slots.empty()) {
-        std::cout << "Slots:" << std::endl;
-        for (const auto& slot : result.slots) {
-            std::cout << "  - " << slot.slot_type << ": " << slot.slot_value << std::endl;
+    if (result.hit) {
+        // HIT: Intent recognized with sufficient confidence
+        std::cout << "\u2705 HIT! Intent: " << result.intent << std::endl;
+        std::cout << "   Confidence: " << (result.intent_confidence * 100.0f) << "%" << std::endl;
+
+        if (!result.slots.empty()) {
+            std::cout << "   Slots:" << std::endl;
+            for (const auto& slot : result.slots) {
+                std::cout << "     - " << slot.slot_type << ": " << slot.slot_value << std::endl;
+            }
         }
+
+        std::cout << std::string(60, '-') << std::endl;
+        std::cout << "   \u2192 Execute intent handler" << std::endl;
     } else {
-        std::cout << "Slots: (none)" << std::endl;
+        // NO HIT: Confidence below threshold
+        std::cout << "\u274c NO HIT (confidence: " << (result.intent_confidence * 100.0f) << "% < threshold)" << std::endl;
+
+        if (show_debug) {
+            std::cout << "   [Debug] Best guess was: " << result.raw_intent << std::endl;
+        }
+
+        std::cout << std::string(60, '-') << std::endl;
+        std::cout << "   \u2192 Fallback to LLaMA inference" << std::endl;
     }
 
-    std::cout << std::string(50, '-') << std::endl;
-
-    if (!result.slot_tags.empty()) {
-        std::cout << "BIO Tags:" << std::endl;
-        std::vector<std::string> chars = utf8_split_chars(result.text);
-
-        std::cout << "  Chars: ";
-        for (size_t i = 0; i < chars.size() && i < result.slot_tags.size(); i++) {
-            std::cout << chars[i] << " ";
-        }
-        std::cout << std::endl;
-
-        std::cout << "  Tags:  ";
-        for (const auto& tag : result.slot_tags) {
-            std::cout << tag << " ";
-        }
-        std::cout << std::endl;
-    }
-
-    std::cout << std::string(50, '=') << std::endl << std::endl;
+    std::cout << std::string(60, '=') << std::endl << std::endl;
 }
 
 } // namespace intent

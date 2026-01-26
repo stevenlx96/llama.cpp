@@ -59,7 +59,11 @@ endforeach()
 # Create JNI Wrapper with MATCHING FLAGS
 # ============================================================================
 
-add_library(llama-android SHARED llama-android-jni.cpp)
+add_library(llama-android SHARED
+    llama-android-jni.cpp
+    intent_jni.cpp
+    intent_recognizer.cpp
+)
 
 target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
 
@@ -127,7 +131,32 @@ set_target_properties(llama_prebuilt PROPERTIES
         INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_opencl_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
 )
 
-target_link_libraries(llama-android PRIVATE llama_prebuilt)
+# ============================================================================
+# ONNX Runtime (for Intent Recognition)
+# ============================================================================
+
+# Check if ONNX Runtime library exists (optional feature)
+set(ONNXRUNTIME_LIB "${PREBUILT_LIB_DIR}/libonnxruntime.so")
+if(EXISTS "${ONNXRUNTIME_LIB}")
+    message(STATUS "✓ Found ONNX Runtime: ${ONNXRUNTIME_LIB}")
+
+    add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
+    set_target_properties(onnxruntime_prebuilt PROPERTIES
+            IMPORTED_LOCATION "${ONNXRUNTIME_LIB}"
+    )
+
+    target_link_libraries(llama-android PRIVATE llama_prebuilt onnxruntime_prebuilt)
+    target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
+else()
+    message(STATUS "⚠ ONNX Runtime not found - Intent recognition will be disabled")
+    message(STATUS "  To enable intent recognition:")
+    message(STATUS "    1. Download ONNX Runtime Android AAR from:")
+    message(STATUS "       https://github.com/microsoft/onnxruntime/releases")
+    message(STATUS "    2. Extract libonnxruntime.so and place it in:")
+    message(STATUS "       ${PREBUILT_LIB_DIR}/")
+
+    target_link_libraries(llama-android PRIVATE llama_prebuilt)
+endif()
 
 # ============================================================================
 # Compiler Options - MATCH DOCKER!

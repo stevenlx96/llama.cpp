@@ -41,29 +41,102 @@ LLaMA生成诗歌
 
 ### 1. 准备ONNX Runtime库
 
-下载ONNX Runtime Android AAR:
+#### 方式A: 从Maven Central下载（推荐）
+
+Windows PowerShell:
+```powershell
+# 下载AAR
+Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/onnxruntime-android-1.17.0.aar" -OutFile "onnxruntime-android-1.17.0.aar"
+
+# 解压（AAR就是ZIP文件）
+Rename-Item onnxruntime-android-1.17.0.aar onnxruntime-android-1.17.0.zip
+Expand-Archive onnxruntime-android-1.17.0.zip -DestinationPath onnxruntime-android
+
+# 复制到项目
+New-Item -ItemType Directory -Force -Path "app\src\main\jniLibs\arm64-v8a"
+Copy-Item "onnxruntime-android\jni\arm64-v8a\libonnxruntime.so" "app\src\main\jniLibs\arm64-v8a\"
+
+# 确认
+ls app\src\main\jniLibs\arm64-v8a\libonnxruntime.so
+```
+
+Linux/Mac:
 ```bash
-# 下载地址
-https://github.com/microsoft/onnxruntime/releases
+# 下载AAR
+wget https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/onnxruntime-android-1.17.0.aar
 
-# 查找文件
-onnxruntime-android-1.17.0.aar
+# 解压
+unzip onnxruntime-android-1.17.0.aar -d onnxruntime-android
 
-# 解压并提取
-unzip onnxruntime-android-1.17.0.aar
-cp jni/arm64-v8a/libonnxruntime.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+# 复制到项目
+mkdir -p app/src/main/jniLibs/arm64-v8a
+cp onnxruntime-android/jni/arm64-v8a/libonnxruntime.so app/src/main/jniLibs/arm64-v8a/
+
+# 确认
+ls -lh app/src/main/jniLibs/arm64-v8a/libonnxruntime.so
+```
+
+#### 方式B: 使用Gradle依赖（更简单）
+
+在 `app/build.gradle.kts` 中添加:
+```kotlin
+dependencies {
+    // ONNX Runtime for Intent Recognition
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
+}
+```
+
+然后Android Studio会自动下载并提取.so文件。
+
+#### 方式C: 从GitHub下载（需要VPN）
+
+```bash
+# GitHub Releases（可能需要代理）
+https://github.com/microsoft/onnxruntime/releases/tag/v1.17.0
+# 注意: 页面上可能没有AAR，请使用方式A的Maven链接
 ```
 
 ### 2. 准备意图识别模型
 
-将你的ONNX模型文件放到应用存储:
+有两种方式准备模型文件：
+
+#### 方式A: 打包在APK中（推荐，首次使用）
+
+1. 将模型文件放到 `app/src/main/assets/models/intend/`:
 ```
-/sdcard/Documents/GGUFChat/models/intend/
+app/src/main/assets/models/intend/
 ├── joint_model_quantized.onnx
 ├── intent_label.txt
 ├── slot_label.txt
 ├── vocab.txt
 └── android_config.json
+```
+
+2. 首次运行时自动复制到内部存储:
+```kotlin
+// 在Application.onCreate()中
+if (!IntentModelManager.isModelInstalled(this)) {
+    IntentModelManager.copyModelsFromAssets(this)
+}
+```
+
+#### 方式B: 从外部导入（更新模型时）
+
+```kotlin
+// 从Downloads或其他目录导入
+val sourceDir = File("/sdcard/Download/intent_model")
+IntentModelManager.importModels(context, sourceDir)
+```
+
+**最终位置（自动）:**
+```
+/data/data/com.stdemo.ggufchat/files/models/intend/
+```
+
+**获取路径:**
+```kotlin
+val modelDir = IntentModelManager.getModelDir(context)
+// 或: val modelDir = context.getIntentModelDir()
 ```
 
 ### 3. 在ChatViewModel中集成
@@ -206,8 +279,9 @@ class MainActivity : AppCompatActivity() {
 ```kotlin
 val recognizer = IntentRecognizer()
 
-// 初始化
-if (recognizer.initialize(modelDir = "/path/to/models/intend", threshold = 0.6f)) {
+// 初始化（使用应用内部存储）
+val modelDir = "${context.filesDir}/models/intend"
+if (recognizer.initialize(modelDir = modelDir, threshold = 0.6f)) {
 
     // 预测
     val result = recognizer.predict("今天北京天气怎么样")

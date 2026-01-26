@@ -207,7 +207,12 @@ bool IntentRecognizer::initialize() {
     // Create session options
     Ort::SessionOptions session_options;
     session_options.SetIntraOpNumThreads(config_.num_threads);
-    session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);  // Disable optimizations for compatibility
+
+    // Set log level to warning to see more details
+    session_options.SetLogSeverityLevel(2);  // 0=Verbose, 1=Info, 2=Warning, 3=Error, 4=Fatal
+
+    LOG_I("Session options configured (threads=%d, optimization=disabled for compatibility)", config_.num_threads);
 
     // Create session
     try {

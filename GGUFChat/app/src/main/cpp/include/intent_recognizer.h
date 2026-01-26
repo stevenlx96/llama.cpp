@@ -43,7 +43,7 @@ struct IntentConfig {
     int max_seq_len = 64;                // Maximum sequence length
     bool use_gpu = false;                // Use GPU acceleration if available
     int num_threads = 4;                 // Number of CPU threads
-    float confidence_threshold = 0.6f;   // Minimum confidence for intent "hit" (default: 0.6)
+    float confidence_threshold = 0.85f;  // Minimum confidence for intent "hit" (default: 0.85)
 
     // File names (can be overridden)
     std::string model_file = "joint_model_quantized.onnx";

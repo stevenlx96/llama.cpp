@@ -69,7 +69,7 @@ class IntentRecognizer {
     fun initialize(
         modelDir: String,
         numThreads: Int = 4,
-        confidenceThreshold: Float = 0.6f
+        confidenceThreshold: Float = 0.85f
     ): Boolean {
         return try {
             contextPtr = nativeIntentInit(modelDir, numThreads, confidenceThreshold)

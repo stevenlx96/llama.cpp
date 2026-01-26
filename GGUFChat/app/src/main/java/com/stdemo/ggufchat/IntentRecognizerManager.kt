@@ -21,10 +21,10 @@ object IntentRecognizerManager {
      * Call this once in Application.onCreate() or MainActivity.onCreate()
      *
      * @param context Application context
-     * @param confidenceThreshold Confidence threshold (default: 0.6)
+     * @param confidenceThreshold Confidence threshold (default: from IntentConfig)
      * @return true if initialization succeeds
      */
-    fun initialize(context: Context, confidenceThreshold: Float = 0.85f): Boolean {
+    fun initialize(context: Context, confidenceThreshold: Float = IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD): Boolean {
         if (isInitialized && recognizer != null) {
             Log.i(TAG, "Already initialized")
             return true
@@ -93,7 +93,7 @@ object IntentRecognizerManager {
      * Get current threshold
      */
     fun getThreshold(): Float {
-        return recognizer?.getThreshold() ?: 0.85f
+        return recognizer?.getThreshold() ?: IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD
     }
 
     /**

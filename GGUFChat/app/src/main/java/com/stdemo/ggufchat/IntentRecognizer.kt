@@ -62,14 +62,14 @@ class IntentRecognizer {
      * Initialize the intent recognizer
      *
      * @param modelDir Path to directory containing ONNX model files
-     * @param numThreads Number of CPU threads (default: 4)
-     * @param confidenceThreshold Minimum confidence for intent "hit" (default: 0.6)
+     * @param numThreads Number of CPU threads (default: from IntentConfig)
+     * @param confidenceThreshold Minimum confidence for intent "hit" (default: from IntentConfig)
      * @return true if successful, false otherwise
      */
     fun initialize(
         modelDir: String,
-        numThreads: Int = 4,
-        confidenceThreshold: Float = 0.85f
+        numThreads: Int = IntentConfig.DEFAULT_NUM_THREADS,
+        confidenceThreshold: Float = IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD
     ): Boolean {
         return try {
             contextPtr = nativeIntentInit(modelDir, numThreads, confidenceThreshold)

@@ -568,7 +568,7 @@ class MainActivity : AppCompatActivity() {
         IntentDiagnostic.checkStatus(this)
 
         // 初始化意图识别管理器
-        val initialized = IntentRecognizerManager.initialize(this, confidenceThreshold = 0.85f)
+        val initialized = IntentRecognizerManager.initialize(this)
 
         if (initialized) {
             android.util.Log.i("MainActivity", "✅ Intent recognition enabled for chat")

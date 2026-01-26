@@ -110,7 +110,7 @@ object IntentDiagnostic {
         val recognizer = IntentRecognizer()
         val modelDir = IntentModelManager.getModelDir(context)
 
-        val initialized = recognizer.initialize(modelDir, confidenceThreshold = 0.85f)
+        val initialized = recognizer.initialize(modelDir)
         Log.i(TAG, "Initialize: ${if (initialized) "✅ SUCCESS" else "❌ FAILED"}")
 
         if (!initialized) {

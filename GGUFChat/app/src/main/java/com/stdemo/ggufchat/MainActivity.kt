@@ -54,6 +54,9 @@ class MainActivity : AppCompatActivity() {
         setupClickListeners()
         updateStreamingModeStatus()
         requestStoragePermission()
+
+        // 测试意图识别功能
+        testIntentRecognition()
     }
 
     private fun setupRecyclerView() {
@@ -555,5 +558,18 @@ class MainActivity : AppCompatActivity() {
                 showStorageDiagnostics()
             }
             .show()
+    }
+
+    /**
+     * 测试意图识别功能
+     */
+    private fun testIntentRecognition() {
+        // 检查意图识别状态
+        IntentDiagnostic.checkStatus(this)
+
+        // 如果模型文件已经存在，尝试测试预测
+        if (IntentModelManager.isModelInstalled(this)) {
+            IntentDiagnostic.testPredict(this, "今天北京天气怎么样")
+        }
     }
 }

@@ -59,11 +59,26 @@ endforeach()
 # Create JNI Wrapper with MATCHING FLAGS
 # ============================================================================
 
-add_library(llama-android SHARED
+# Base source files
+set(LLAMA_ANDROID_SOURCES
     llama-android-jni.cpp
-    intent_jni.cpp
-    intent_recognizer.cpp
 )
+
+# Check if ONNX Runtime library exists (optional feature)
+set(ONNXRUNTIME_LIB "${PREBUILT_LIB_DIR}/libonnxruntime.so")
+if(EXISTS "${ONNXRUNTIME_LIB}")
+    message(STATUS "✓ ONNX Runtime found - enabling intent recognition")
+    list(APPEND LLAMA_ANDROID_SOURCES
+        intent_jni.cpp
+        intent_recognizer.cpp
+    )
+    set(ENABLE_INTENT_RECOGNITION ON)
+else()
+    message(STATUS "⚠ ONNX Runtime not found - intent recognition disabled")
+    set(ENABLE_INTENT_RECOGNITION OFF)
+endif()
+
+add_library(llama-android SHARED ${LLAMA_ANDROID_SOURCES})
 
 target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
 
@@ -135,11 +150,8 @@ set_target_properties(llama_prebuilt PROPERTIES
 # ONNX Runtime (for Intent Recognition)
 # ============================================================================
 
-# Check if ONNX Runtime library exists (optional feature)
-set(ONNXRUNTIME_LIB "${PREBUILT_LIB_DIR}/libonnxruntime.so")
-if(EXISTS "${ONNXRUNTIME_LIB}")
-    message(STATUS "✓ Found ONNX Runtime: ${ONNXRUNTIME_LIB}")
-
+# Link ONNX Runtime if available (already checked above)
+if(ENABLE_INTENT_RECOGNITION)
     add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
     set_target_properties(onnxruntime_prebuilt PROPERTIES
             IMPORTED_LOCATION "${ONNXRUNTIME_LIB}"
@@ -147,15 +159,17 @@ if(EXISTS "${ONNXRUNTIME_LIB}")
 
     target_link_libraries(llama-android PRIVATE llama_prebuilt onnxruntime_prebuilt)
     target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
-else()
-    message(STATUS "⚠ ONNX Runtime not found - Intent recognition will be disabled")
-    message(STATUS "  To enable intent recognition:")
-    message(STATUS "    1. Download ONNX Runtime Android AAR from:")
-    message(STATUS "       https://github.com/microsoft/onnxruntime/releases")
-    message(STATUS "    2. Extract libonnxruntime.so and place it in:")
-    message(STATUS "       ${PREBUILT_LIB_DIR}/")
 
+    message(STATUS "  Intent recognition feature: ENABLED")
+else()
     target_link_libraries(llama-android PRIVATE llama_prebuilt)
+
+    message(STATUS "  Intent recognition feature: DISABLED")
+    message(STATUS "  To enable intent recognition:")
+    message(STATUS "    1. Download ONNX Runtime Android AAR (v1.17.0) from:")
+    message(STATUS "       https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/")
+    message(STATUS "    2. Extract libonnxruntime.so for ${ANDROID_ABI} and place it in:")
+    message(STATUS "       ${PREBUILT_LIB_DIR}/")
 endif()
 
 # ============================================================================

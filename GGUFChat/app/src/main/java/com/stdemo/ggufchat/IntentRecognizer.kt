@@ -76,6 +76,10 @@ class IntentRecognizer {
             initialized = (contextPtr != 0L)
             Log.i(TAG, "Intent recognizer initialized: $initialized (threshold: ${confidenceThreshold * 100}%)")
             initialized
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "Intent recognition not available - ONNX Runtime not included in build")
+            Log.w(TAG, "To enable: add libonnxruntime.so to jniLibs/${System.getProperty("os.arch")}")
+            false
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize intent recognizer", e)
             false
@@ -90,12 +94,14 @@ class IntentRecognizer {
      */
     fun predict(text: String): IntentResult {
         if (!initialized || contextPtr == 0L) {
-            Log.w(TAG, "Intent recognizer not initialized")
             return IntentResult(text = text, hit = false)
         }
 
         return try {
             nativeIntentPredict(contextPtr, text) ?: IntentResult(text = text, hit = false)
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "Intent recognition not available")
+            IntentResult(text = text, hit = false)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to predict intent", e)
             IntentResult(text = text, hit = false)
@@ -109,8 +115,12 @@ class IntentRecognizer {
      */
     fun setThreshold(threshold: Float) {
         if (initialized && contextPtr != 0L) {
-            nativeIntentSetThreshold(contextPtr, threshold)
-            Log.i(TAG, "Threshold updated to: ${threshold * 100}%")
+            try {
+                nativeIntentSetThreshold(contextPtr, threshold)
+                Log.i(TAG, "Threshold updated to: ${threshold * 100}%")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Intent recognition not available")
+            }
         }
     }
 
@@ -121,7 +131,12 @@ class IntentRecognizer {
      */
     fun getThreshold(): Float {
         return if (initialized && contextPtr != 0L) {
-            nativeIntentGetThreshold(contextPtr)
+            try {
+                nativeIntentGetThreshold(contextPtr)
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Intent recognition not available")
+                0.0f
+            }
         } else {
             0.0f
         }
@@ -132,10 +147,16 @@ class IntentRecognizer {
      */
     fun release() {
         if (initialized && contextPtr != 0L) {
-            nativeIntentFree(contextPtr)
-            contextPtr = 0
-            initialized = false
-            Log.i(TAG, "Intent recognizer released")
+            try {
+                nativeIntentFree(contextPtr)
+                contextPtr = 0
+                initialized = false
+                Log.i(TAG, "Intent recognizer released")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Intent recognition not available")
+                contextPtr = 0
+                initialized = false
+            }
         }
     }
 

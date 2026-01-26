@@ -55,8 +55,8 @@ class MainActivity : AppCompatActivity() {
         updateStreamingModeStatus()
         requestStoragePermission()
 
-        // 测试意图识别功能
-        testIntentRecognition()
+        // 初始化意图识别管理器
+        initializeIntentRecognition()
     }
 
     private fun setupRecyclerView() {
@@ -561,15 +561,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 测试意图识别功能
+     * 初始化意图识别功能
      */
-    private fun testIntentRecognition() {
-        // 检查意图识别状态
+    private fun initializeIntentRecognition() {
+        // 诊断检查
         IntentDiagnostic.checkStatus(this)
 
-        // 如果模型文件已经存在，尝试测试预测
-        if (IntentModelManager.isModelInstalled(this)) {
+        // 初始化意图识别管理器
+        val initialized = IntentRecognizerManager.initialize(this, confidenceThreshold = 0.6f)
+
+        if (initialized) {
+            android.util.Log.i("MainActivity", "✅ Intent recognition enabled for chat")
+
+            // 测试一下
             IntentDiagnostic.testPredict(this, "今天北京天气怎么样")
+        } else {
+            android.util.Log.w("MainActivity", "⚠️ Intent recognition disabled - models not available")
         }
     }
 }

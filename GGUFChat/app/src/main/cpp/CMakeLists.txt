@@ -152,15 +152,15 @@ set_target_properties(llama_prebuilt PROPERTIES
 
 # Link ONNX Runtime if available (already checked above)
 if(ENABLE_INTENT_RECOGNITION)
-    add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
-    set_target_properties(onnxruntime_prebuilt PROPERTIES
-            IMPORTED_LOCATION "${ONNXRUNTIME_LIB}"
+    # Use direct path instead of IMPORTED library to ensure proper linking on Windows NDK
+    target_link_libraries(llama-android PRIVATE
+        llama_prebuilt
+        "${ONNXRUNTIME_LIB}"
     )
-
-    target_link_libraries(llama-android PRIVATE llama_prebuilt onnxruntime_prebuilt)
     target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
 
     message(STATUS "  Intent recognition feature: ENABLED")
+    message(STATUS "  ONNX Runtime library: ${ONNXRUNTIME_LIB}")
 else()
     target_link_libraries(llama-android PRIVATE llama_prebuilt)
 

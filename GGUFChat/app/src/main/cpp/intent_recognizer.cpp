@@ -7,9 +7,15 @@
 #include <cmath>
 #include <codecvt>
 #include <locale>
+#include <android/log.h>
 
 // JSON parsing (simple implementation)
 #include <nlohmann/json.hpp>
+
+#define INTENT_TAG "IntentRecognizerCPP"
+#define LOG_I(...) __android_log_print(ANDROID_LOG_INFO, INTENT_TAG, __VA_ARGS__)
+#define LOG_E(...) __android_log_print(ANDROID_LOG_ERROR, INTENT_TAG, __VA_ARGS__)
+#define LOG_W(...) __android_log_print(ANDROID_LOG_WARN, INTENT_TAG, __VA_ARGS__)
 
 namespace intent {
 
@@ -84,7 +90,7 @@ bool IntentRecognizer::load_labels(const std::string& filename, std::vector<std:
     std::ifstream file(filepath);
 
     if (!file.is_open()) {
-        std::cerr << "Failed to open label file: " << filepath << std::endl;
+        LOG_E("Failed to open label file: %s", filepath.c_str());
         return false;
     }
 
@@ -99,7 +105,7 @@ bool IntentRecognizer::load_labels(const std::string& filename, std::vector<std:
         }
     }
 
-    std::cout << "Loaded " << labels.size() << " labels from " << filename << std::endl;
+    LOG_I("Loaded %zu labels from %s", labels.size(), filename.c_str());
     return !labels.empty();
 }
 
@@ -108,8 +114,8 @@ bool IntentRecognizer::load_config() {
     std::ifstream file(filepath);
 
     if (!file.is_open()) {
-        std::cerr << "Warning: Could not open config file: " << filepath << std::endl;
-        std::cerr << "Using default max_seq_len = " << config_.max_seq_len << std::endl;
+        LOG_W("Could not open config file: %s", filepath.c_str());
+        LOG_W("Using default max_seq_len = %d", config_.max_seq_len);
         return true; // Not critical, use defaults
     }
 
@@ -119,10 +125,10 @@ bool IntentRecognizer::load_config() {
 
         if (config_json.contains("max_seq_len")) {
             config_.max_seq_len = config_json["max_seq_len"];
-            std::cout << "Loaded max_seq_len from config: " << config_.max_seq_len << std::endl;
+            LOG_I("Loaded max_seq_len from config: %d", config_.max_seq_len);
         }
     } catch (const std::exception& e) {
-        std::cerr << "Warning: Failed to parse config JSON: " << e.what() << std::endl;
+        LOG_W("Failed to parse config JSON: %s", e.what());
         return true; // Use defaults
     }
 
@@ -131,23 +137,26 @@ bool IntentRecognizer::load_config() {
 
 bool IntentRecognizer::initialize() {
     if (initialized_) {
-        std::cout << "Already initialized" << std::endl;
+        LOG_I("Already initialized");
         return true;
     }
 
-    std::cout << "Initializing IntentRecognizer..." << std::endl;
-    std::cout << "Model directory: " << config_.model_dir << std::endl;
+    LOG_I("Initializing IntentRecognizer...");
+    LOG_I("Model directory: %s", config_.model_dir.c_str());
 
     // Load configuration
     if (!load_config()) {
+        LOG_E("Failed to load config");
         return false;
     }
 
     // Load labels
     if (!load_labels(config_.intent_labels_file, intent_labels_)) {
+        LOG_E("Failed to load intent labels");
         return false;
     }
     if (!load_labels(config_.slot_labels_file, slot_labels_)) {
+        LOG_E("Failed to load slot labels");
         return false;
     }
 
@@ -155,8 +164,8 @@ bool IntentRecognizer::initialize() {
     std::string vocab_path = config_.model_dir + "/" + config_.vocab_file;
     std::ifstream vocab_file(vocab_path);
     if (!vocab_file.is_open()) {
-        std::cerr << "Warning: Could not open vocab file: " << vocab_path << std::endl;
-        std::cerr << "Will use simple character-based tokenization" << std::endl;
+        LOG_W("Could not open vocab file: %s", vocab_path.c_str());
+        LOG_W("Will use simple character-based tokenization");
     } else {
         std::string token;
         int64_t id = 0;
@@ -167,7 +176,7 @@ bool IntentRecognizer::initialize() {
                 impl_->vocab[token] = id++;
             }
         }
-        std::cout << "Loaded vocabulary with " << impl_->vocab.size() << " tokens" << std::endl;
+        LOG_I("Loaded vocabulary with %zu tokens", impl_->vocab.size());
 
         // Set special token IDs
         if (impl_->vocab.count("[PAD]")) impl_->pad_token_id = impl_->vocab["[PAD]"];
@@ -182,16 +191,18 @@ bool IntentRecognizer::initialize() {
     // Check if quantized model exists, otherwise try non-quantized
     std::ifstream test_file(model_path);
     if (!test_file.good()) {
+        LOG_W("Quantized model not found: %s", model_path.c_str());
         model_path = config_.model_dir + "/joint_model.onnx";
         test_file.open(model_path);
         if (!test_file.good()) {
-            std::cerr << "Failed to find ONNX model in: " << config_.model_dir << std::endl;
+            LOG_E("Failed to find ONNX model in: %s", config_.model_dir.c_str());
+            LOG_E("Tried: joint_model_quantized.onnx and joint_model.onnx");
             return false;
         }
     }
     test_file.close();
 
-    std::cout << "Loading ONNX model from: " << model_path << std::endl;
+    LOG_I("Loading ONNX model from: %s", model_path.c_str());
 
     // Create session options
     Ort::SessionOptions session_options;
@@ -202,7 +213,7 @@ bool IntentRecognizer::initialize() {
     try {
         impl_->session = Ort::Session(impl_->env, model_path.c_str(), session_options);
     } catch (const Ort::Exception& e) {
-        std::cerr << "Failed to create ONNX session: " << e.what() << std::endl;
+        LOG_E("Failed to create ONNX session: %s", e.what());
         return false;
     }
 
@@ -210,7 +221,7 @@ bool IntentRecognizer::initialize() {
     size_t num_inputs = impl_->session.GetInputCount();
     size_t num_outputs = impl_->session.GetOutputCount();
 
-    std::cout << "Model has " << num_inputs << " inputs and " << num_outputs << " outputs" << std::endl;
+    LOG_I("Model has %zu inputs and %zu outputs", num_inputs, num_outputs);
 
     // Get input names and shapes
     for (size_t i = 0; i < num_inputs; i++) {
@@ -251,7 +262,8 @@ bool IntentRecognizer::initialize() {
     }
 
     initialized_ = true;
-    std::cout << "IntentRecognizer initialized successfully!" << std::endl;
+    LOG_I("IntentRecognizer initialized successfully!");
+    LOG_I("Intent labels: %zu, Slot labels: %zu", intent_labels_.size(), slot_labels_.size());
     return true;
 }
 

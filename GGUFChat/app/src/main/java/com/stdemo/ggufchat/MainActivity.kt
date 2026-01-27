@@ -104,6 +104,17 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        // 双击状态栏 - 运行意图识别测试
+        var lastClickTime = 0L
+        binding.statusText.setOnClickListener {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastClickTime < 500) {
+                // 双击
+                runIntentTest()
+            }
+            lastClickTime = currentTime
+        }
+
         // 发送按钮
         binding.sendButton.setOnClickListener {
             val text = binding.inputEditText.text.toString()
@@ -578,5 +589,62 @@ class MainActivity : AppCompatActivity() {
         } else {
             android.util.Log.w("MainActivity", "⚠️ Intent recognition disabled - models not available")
         }
+    }
+
+    /**
+     * 运行意图识别批量测试
+     */
+    private fun runIntentTest() {
+        if (!IntentRecognizerManager.isReady()) {
+            Toast.makeText(this, "Intent recognition not ready", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Toast.makeText(this, "Running intent tests...", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch {
+            // 使用示例测试数据
+            val testCases = IntentTester.getExampleTestCases()
+
+            // 运行测试
+            val result = IntentTester.runBatchTest(this@MainActivity, testCases)
+
+            // 生成报告
+            val report = IntentTester.generateReport(result)
+
+            // 显示结果对话框
+            runOnUiThread {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Intent Recognition Test Results")
+                    .setMessage("Accuracy: ${(result.hitRate * 100).toInt()}%\n" +
+                            "Total: ${result.totalTests}\n" +
+                            "Correct: ${result.correctIntents}\n" +
+                            "Failed: ${result.failedCases.size}\n" +
+                            "Avg Confidence: ${(result.avgConfidence * 100).toInt()}%\n\n" +
+                            "Check Logcat (tag: IntentTester) for details")
+                    .setPositiveButton("View Report") { _, _ ->
+                        showTestReport(report)
+                    }
+                    .setNegativeButton("Close", null)
+                    .show()
+            }
+        }
+    }
+
+    /**
+     * 显示测试报告
+     */
+    private fun showTestReport(report: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Test Report")
+            .setMessage(report)
+            .setPositiveButton("Copy") { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Intent Test Report", report)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Report copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 }

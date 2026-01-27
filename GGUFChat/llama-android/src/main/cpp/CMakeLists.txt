@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "CMAKE BUILD START")
+message(STATUS "CMAKE BUILD START (with Intent Recognition support)")
 message(STATUS "========================================")
 
 # ============================================================================
@@ -54,24 +54,54 @@ endforeach()
 message(STATUS "All required files verified!")
 
 # ============================================================================
-# SECTION 3: Create JNI Wrapper Library
+# SECTION 3: Check for ONNX Runtime (Optional - for Intent Recognition)
 # ============================================================================
 
-add_library(llama-android SHARED
-        "llama-android-jni.cpp"
+set(ONNXRUNTIME_LIB "${PREBUILT_LIB_DIR}/libonnxruntime.so")
+if(EXISTS "${ONNXRUNTIME_LIB}")
+    message(STATUS "✓ ONNX Runtime found - enabling intent recognition")
+    set(ENABLE_INTENT_RECOGNITION ON)
+else()
+    message(STATUS "⚠ ONNX Runtime not found - intent recognition disabled")
+    message(STATUS "  To enable intent recognition:")
+    message(STATUS "    1. Download ONNX Runtime Android AAR (v1.17.0) from:")
+    message(STATUS "       https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/")
+    message(STATUS "    2. Extract libonnxruntime.so for ${ANDROID_ABI} and place it in:")
+    message(STATUS "       ${PREBUILT_LIB_DIR}/")
+    set(ENABLE_INTENT_RECOGNITION OFF)
+endif()
+
+# ============================================================================
+# SECTION 4: Create JNI Wrapper Library
+# ============================================================================
+
+# Base source files
+set(LLAMA_ANDROID_SOURCES
+    "llama-android-jni.cpp"
 )
 
-message(STATUS "Created llama-android target from llama-android-jni.cpp")
+# Add intent recognition sources if enabled
+if(ENABLE_INTENT_RECOGNITION)
+    list(APPEND LLAMA_ANDROID_SOURCES
+        "intent_jni.cpp"
+        "intent_recognizer.cpp"
+    )
+    message(STATUS "Added intent recognition sources: intent_jni.cpp, intent_recognizer.cpp")
+endif()
+
+add_library(llama-android SHARED ${LLAMA_ANDROID_SOURCES})
+
+message(STATUS "Created llama-android target")
 
 # ============================================================================
-# SECTION 4: Configure Include Paths
+# SECTION 5: Configure Include Paths
 # ============================================================================
 
 target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
 message(STATUS "Added include directory: ${INCLUDE_DIR}")
 
 # ============================================================================
-# SECTION 5: Link System Libraries
+# SECTION 6: Link System Libraries
 # ============================================================================
 
 target_link_libraries(llama-android PRIVATE
@@ -84,7 +114,7 @@ target_link_libraries(llama-android PRIVATE
 message(STATUS "Linked system libraries: android, log, m, atomic")
 
 # ============================================================================
-# SECTION 6: Import Prebuilt Libraries with Dependencies
+# SECTION 7: Import Prebuilt Libraries with Dependencies
 # ============================================================================
 
 # ggml-base (no dependencies)
@@ -127,28 +157,39 @@ set_target_properties(llama_prebuilt PROPERTIES
 message(STATUS "Imported llama_prebuilt (depends on all ggml libraries)")
 
 # ============================================================================
-# SECTION 7: Link Prebuilt Libraries to JNI Wrapper
+# SECTION 8: Link Prebuilt Libraries to JNI Wrapper
 # ============================================================================
 
-target_link_libraries(llama-android PRIVATE llama_prebuilt)
-message(STATUS "Linked llama_prebuilt to llama-android (with transitive dependencies)")
+if(ENABLE_INTENT_RECOGNITION)
+    # Link with ONNX Runtime for intent recognition
+    target_link_libraries(llama-android PRIVATE
+        llama_prebuilt
+        "${ONNXRUNTIME_LIB}"
+    )
+    target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
+    message(STATUS "Linked llama_prebuilt and ONNX Runtime to llama-android")
+else()
+    target_link_libraries(llama-android PRIVATE llama_prebuilt)
+    message(STATUS "Linked llama_prebuilt to llama-android (with transitive dependencies)")
+endif()
 
 # ============================================================================
-# SECTION 8: Compiler Options
+# SECTION 9: Compiler Options
 # ============================================================================
 
 target_compile_options(llama-android PRIVATE
         -O3
+        -DNDEBUG
         -fPIC
         -fvisibility=default
         -Wall
         -Wextra
         -Wno-deprecated-declarations
 )
-message(STATUS "Set compiler options: -O3, -fPIC, -fvisibility=default")
+message(STATUS "Set compiler options: -O3, -DNDEBUG, -fPIC, -fvisibility=default")
 
 # ============================================================================
-# SECTION 9: Linker Options
+# SECTION 10: Linker Options
 # ============================================================================
 
 target_link_options(llama-android PRIVATE
@@ -159,7 +200,7 @@ target_link_options(llama-android PRIVATE
 message(STATUS "Set linker options: --allow-shlib-undefined, -soname")
 
 # ============================================================================
-# SECTION 10: Debug Symbols
+# SECTION 11: Debug Symbols
 # ============================================================================
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -179,8 +220,17 @@ message(STATUS "✓ CMAKE CONFIGURATION COMPLETE")
 message(STATUS "========================================")
 message(STATUS "Target: llama-android")
 message(STATUS "Type: SHARED library (JNI wrapper)")
-message(STATUS "Source: llama-android-jni.cpp")
+message(STATUS "Sources: llama-android-jni.cpp")
+if(ENABLE_INTENT_RECOGNITION)
+    message(STATUS "         intent_jni.cpp, intent_recognizer.cpp")
+    message(STATUS "Intent Recognition: ENABLED")
+else()
+    message(STATUS "Intent Recognition: DISABLED")
+endif()
 message(STATUS "Include: ${INCLUDE_DIR}")
 message(STATUS "Dependencies: llama + ggml libraries")
+if(ENABLE_INTENT_RECOGNITION)
+    message(STATUS "              + ONNX Runtime (for intent)")
+endif()
 message(STATUS "Output: libllama-android.so")
 message(STATUS "========================================")

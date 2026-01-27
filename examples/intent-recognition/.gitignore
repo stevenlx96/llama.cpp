@@ -1,0 +1,43 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Model files (large binaries)
+models/*.onnx
+*.onnx
+
+# Compiled binaries
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Android
+*.apk
+*.ap_
+*.dex
+.gradle/
+local.properties
+*.iml
+.externalNativeBuild/
+.cxx/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+venv/
+.env
+
+# macOS
+.DS_Store

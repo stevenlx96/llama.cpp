@@ -32,4 +32,25 @@ object IntentConfig {
             require(value > 0) { "Number of threads must be positive, got $value" }
             field = value
         }
+
+    /**
+     * Intents that should fallback to LLM even when hit
+     *
+     * These intents will be recognized but won't trigger intent handlers.
+     * Instead, they will be passed to the LLM for natural conversation.
+     *
+     * Example: "chat-chat" is a general chat intent that should use LLM
+     */
+    var FALLBACK_TO_LLM_INTENTS = setOf(
+        "chat-chat"
+    )
+
+    /**
+     * Check if an intent should fallback to LLM
+     */
+    fun shouldFallbackToLLM(intent: String): Boolean {
+        return FALLBACK_TO_LLM_INTENTS.any {
+            intent.equals(it, ignoreCase = true)
+        }
+    }
 }

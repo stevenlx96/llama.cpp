@@ -76,9 +76,16 @@ class ChatViewModel : ViewModel() {
             // ✨ 尝试意图识别
             val intentResult = IntentRecognizerManager.predict(text)
             if (intentResult != null && intentResult.hit) {
-                // ✅ 意图命中 - 使用意图处理器
-                Log.i("ChatViewModel", "Intent HIT: ${intentResult.intent} (${(intentResult.confidence * 100).toInt()}%)")
-                handleIntent(intentResult)
+                // ✅ 意图命中 - 检查是否需要回退到 LLM
+                if (IntentConfig.shouldFallbackToLLM(intentResult.intent)) {
+                    // chat-chat 等意图 - 回退到 LLM
+                    Log.i("ChatViewModel", "Intent HIT: ${intentResult.intent} (${(intentResult.confidence * 100).toInt()}%) but configured for LLM fallback")
+                    generateWithLLM(text)
+                } else {
+                    // 其他意图 - 使用意图处理器
+                    Log.i("ChatViewModel", "Intent HIT: ${intentResult.intent} (${(intentResult.confidence * 100).toInt()}%) - using intent handler")
+                    handleIntent(intentResult)
+                }
             } else {
                 // ❌ 未命中 - 回退到 LLM
                 if (intentResult != null) {

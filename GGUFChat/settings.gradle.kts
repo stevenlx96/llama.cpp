@@ -21,6 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "GGUFChat"
 include(":app")
-// include(":llama-android")  // Disabled - only building app module
+include(":llama-android")
 
  

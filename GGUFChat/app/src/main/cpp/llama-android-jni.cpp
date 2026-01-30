@@ -3,6 +3,7 @@
 #include <vector>
 #include <chrono>
 #include <android/log.h>
+#include <EGL/egl.h>  // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
 #include "ggml-backend.h"
 #include <stdlib.h>
@@ -139,6 +140,133 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     }
 }
 
+// ============================================================
+// EGL Context Initialization - Required for OpenCL on Android
+// ============================================================
+
+// Many Android devices (especially Qualcomm) require an EGL context
+// to be initialized before OpenCL can be used. This is a Qualcomm-specific
+// requirement where OpenCL shares resources with OpenGL ES.
+static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
+static EGLContext g_egl_context = EGL_NO_CONTEXT;
+static EGLSurface g_egl_surface = EGL_NO_SURFACE;
+
+static bool init_egl_for_opencl() {
+    LOGI("========================================");
+    LOGI("Initializing EGL Context for OpenCL");
+    LOGI("========================================");
+
+    // Get default display
+    g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (g_egl_display == EGL_NO_DISPLAY) {
+        LOGE("eglGetDisplay failed: 0x%x", eglGetError());
+        return false;
+    }
+
+    // Initialize EGL
+    EGLint major, minor;
+    if (!eglInitialize(g_egl_display, &major, &minor)) {
+        LOGE("eglInitialize failed: 0x%x", eglGetError());
+        return false;
+    }
+    LOGI("EGL initialized: version %d.%d", major, minor);
+
+    // Choose config for OpenGL ES 3.0
+    const EGLint config_attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,  // Use pbuffer (offscreen)
+        EGL_BLUE_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_RED_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 0,
+        EGL_NONE
+    };
+
+    EGLConfig config;
+    EGLint num_configs;
+    if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &num_configs)) {
+        LOGE("eglChooseConfig failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+
+    if (num_configs == 0) {
+        LOGE("No suitable EGL config found");
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("EGL config chosen");
+
+    // Create pbuffer surface (1x1 offscreen surface)
+    const EGLint surface_attribs[] = {
+        EGL_WIDTH, 1,
+        EGL_HEIGHT, 1,
+        EGL_NONE
+    };
+    g_egl_surface = eglCreatePbufferSurface(g_egl_display, config, surface_attribs);
+    if (g_egl_surface == EGL_NO_SURFACE) {
+        LOGE("eglCreatePbufferSurface failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("EGL pbuffer surface created");
+
+    // Create OpenGL ES 3.0 context
+    const EGLint context_attribs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,  // OpenGL ES 3.0
+        EGL_NONE
+    };
+    g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        LOGE("eglCreateContext failed: 0x%x", eglGetError());
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        return false;
+    }
+    LOGI("EGL context created (OpenGL ES 3.0)");
+
+    // Make context current
+    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+        LOGE("eglMakeCurrent failed: 0x%x", eglGetError());
+        eglDestroyContext(g_egl_display, g_egl_context);
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        g_egl_context = EGL_NO_CONTEXT;
+        return false;
+    }
+
+    LOGI("EGL context made current");
+    LOGI("========================================");
+    LOGI("EGL initialization complete!");
+    LOGI("OpenCL should now be able to access GPU");
+    LOGI("========================================");
+    return true;
+}
+
+static void cleanup_egl() {
+    if (g_egl_display != EGL_NO_DISPLAY) {
+        eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (g_egl_context != EGL_NO_CONTEXT) {
+            eglDestroyContext(g_egl_display, g_egl_context);
+        }
+        if (g_egl_surface != EGL_NO_SURFACE) {
+            eglDestroySurface(g_egl_display, g_egl_surface);
+        }
+        eglTerminate(g_egl_display);
+    }
+    g_egl_display = EGL_NO_DISPLAY;
+    g_egl_context = EGL_NO_CONTEXT;
+    g_egl_surface = EGL_NO_SURFACE;
+}
+
 struct llama_android_context {
     llama_model* model;
     llama_context* ctx;
@@ -271,20 +399,40 @@ JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
     (void)thiz;  // Unused parameter (standard JNI pattern)
-    (void)libPath;  // Not used in CPU-only mode
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
 
     LOGI("========================================");
-    LOGI("GGUFChat CPU-Only Initialization");
+    LOGI("GGUFChat with NPU/GPU Acceleration");
     LOGI("========================================");
 
     // Set log callback for llama.cpp
     llama_log_set(ggml_log_callback_android, nullptr);
 
-    // Initialize llama backend (CPU only)
+    // CRITICAL: Initialize EGL context FIRST (required for OpenCL on Qualcomm Adreno GPU)
+    // This must be done before loading backends to allow OpenCL to detect GPU devices
+    if (!init_egl_for_opencl()) {
+        LOGE("EGL initialization failed - OpenCL GPU acceleration may not be available");
+    }
+
+    // Load all backend variants dynamically from native library path
+    // This allows the system to discover and use OpenCL, Hexagon, and CPU backends
+    const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
+    LOGI("Loading backends from: %s", nativeLibPath);
+    ggml_backend_load_all_from_path(nativeLibPath);
+    env->ReleaseStringUTFChars(libPath, nativeLibPath);
+
+    // Log available backends
+    size_t backend_count = ggml_backend_reg_count();
+    LOGI("Available backends: %zu", backend_count);
+    for (size_t i = 0; i < backend_count; i++) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        LOGI("  Backend %zu: %s", i, ggml_backend_reg_name(reg));
+    }
+
+    // Initialize llama backend
     llama_backend_init();
-    LOGI("llama backend initialized (CPU-only)");
+    LOGI("llama backend initialized");
 
     // Load model with default parameters
     LOGI("Loading model: %s", path);
@@ -925,6 +1073,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
     }
 
     llama_backend_free();
+
+    // Cleanup EGL resources
+    cleanup_egl();
+    LOGD("EGL resources cleaned up");
 }
 
 }  // extern "C"

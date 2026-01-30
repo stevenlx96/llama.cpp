@@ -479,22 +479,25 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Official configuration matching examples/llama.android
+    // Configuration matching official command line tool
     const int DEFAULT_CONTEXT_SIZE = 8192;
-    const int BATCH_SIZE = 512;  // Official example uses 512
+    const int BATCH_SIZE = 128;  // Official uses 128, not 512!
 
     ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
     ctx_params.n_batch = BATCH_SIZE;
     ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-    // NOTE: flash_attn_type is left as default (llama.cpp will decide)
 
-    LOGI("Context params (matching official example):");
+    // CRITICAL: Enable Flash Attention for better performance
+    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+
+    LOGI("Context params (matching official CLI):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
+    LOGI("  - flash_attn: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

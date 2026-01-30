@@ -445,10 +445,17 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     llama_backend_init();
     LOGI("llama backend initialized");
 
-    // Load model with default parameters
+    // Load model with optimized parameters
     LOGI("Loading model: %s", path);
 
     llama_model_params model_params = llama_model_default_params();
+
+    // CRITICAL: Use single device mode to avoid splitting across CPU/GPU/NPU
+    // This prevents the 264+ graph splits that cause massive overhead
+    model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
+    model_params.n_gpu_layers = 99;  // Offload all layers to GPU (OpenCL)
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (all to GPU)");
+
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 

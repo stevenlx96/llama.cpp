@@ -421,14 +421,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("Loading backends from: %s", nativeLibPath);
     ggml_backend_load_all_from_path(nativeLibPath);
     env->ReleaseStringUTFChars(libPath, nativeLibPath);
-
-    // Log available backends
-    size_t backend_count = ggml_backend_reg_count();
-    LOGI("Available backends: %zu", backend_count);
-    for (size_t i = 0; i < backend_count; i++) {
-        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
-        LOGI("  Backend %zu: %s", i, ggml_backend_reg_name(reg));
-    }
+    LOGI("Backends loaded dynamically");
 
     // Initialize llama backend
     llama_backend_init();

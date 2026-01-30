@@ -102,7 +102,7 @@ target_link_libraries(llama-android PRIVATE EGL)
 # Import Prebuilt Libraries
 # ============================================================================
 
-# Note: We only link to llama.so at compile time.
+# Note: We link to llama.so and ggml.so at compile time.
 # Other backends (CPU, OpenCL, Hexagon) are loaded dynamically at runtime
 # via ggml_backend_load_all_from_path()
 
@@ -112,6 +112,12 @@ set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
 )
 
+# ggml (required for ggml_backend_* functions)
+add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
+)
+
 # ============================================================================
 # Link Libraries
 # ============================================================================
@@ -119,12 +125,16 @@ set_target_properties(llama_prebuilt PROPERTIES
 if(ENABLE_INTENT_RECOGNITION)
     target_link_libraries(llama-android PRIVATE
         llama_prebuilt
+        ggml_prebuilt
         "${ONNXRUNTIME_LIB}"
     )
     target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
     message(STATUS "Intent recognition: ENABLED")
 else()
-    target_link_libraries(llama-android PRIVATE llama_prebuilt)
+    target_link_libraries(llama-android PRIVATE
+        llama_prebuilt
+        ggml_prebuilt
+    )
     message(STATUS "Intent recognition: DISABLED")
 endif()
 

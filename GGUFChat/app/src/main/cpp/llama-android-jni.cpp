@@ -22,17 +22,10 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     // FILTER: Skip verbose/repetitive messages (reduce log spam)
     // ============================================================
 
-    // FILTER 1: TEMPORARILY ENABLED - Show layer assignment for debugging
-    // We need to see which layers go to OpenCL vs Hexagon
-    // if (strstr(text, "layer") != nullptr &&
-    //     strstr(text, "assigned to device") != nullptr) {
-    //     return;  // Skip "load_tensors: layer X assigned to device HTP0"
-    // }
-
-    // FILTER 2: Skip repetitive KV cache layer messages (28+ lines of spam)
+    // FILTER 1: Skip repetitive KV cache layer messages
     if (strstr(text, "llama_kv_cache: layer") != nullptr &&
         strstr(text, "dev =") != nullptr) {
-        return;  // Skip "llama_kv_cache: layer X: dev = HTP0"
+        return;
     }
 
     // FILTER 3: Skip verbose repack progress messages
@@ -113,14 +106,6 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
 
     // ============================================================
     // ALLOW THROUGH: Critical diagnostic information
-    // ============================================================
-    // - load_tensors: offloaded X/Y layers
-    // - load_tensors: buffer size messages
-    // - load_tensors: warnings about tensor compatibility
-    // - Backend registration (ggml_backend_*_init)
-    // - OpenCL diagnostics
-    // - Errors and warnings
-    // - Final context creation summary
     // ============================================================
 
     // Map ggml log levels to Android log priorities

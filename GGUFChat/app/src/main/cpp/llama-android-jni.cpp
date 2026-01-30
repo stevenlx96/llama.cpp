@@ -419,6 +419,24 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // This allows the system to discover and use OpenCL, Hexagon, and CPU backends
     const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
     LOGI("Loading backends from: %s", nativeLibPath);
+
+    // CRITICAL: Set environment variables for Hexagon DSP to find HTP skel libraries
+    // This allows the DSP to load libggml-htp-vXX.so from the app's native lib directory
+    // without requiring root access to /vendor/dsp/cdsp/
+    LOGI("Setting Hexagon DSP environment variables...");
+
+    // ADSP_LIBRARY_PATH - Primary path for DSP to find skel libraries
+    setenv("ADSP_LIBRARY_PATH", nativeLibPath, 1);
+    LOGI("  ADSP_LIBRARY_PATH = %s", nativeLibPath);
+
+    // Additional DSP search paths (some devices use these)
+    std::string dspSearchPath = std::string(nativeLibPath) + ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
+    setenv("ADSP_LIBRARY_PATH", dspSearchPath.c_str(), 1);
+    LOGI("  ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
+
+    // Set LD_LIBRARY_PATH for the stub libraries on Android side
+    setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
+
     ggml_backend_load_all_from_path(nativeLibPath);
     env->ReleaseStringUTFChars(libPath, nativeLibPath);
     LOGI("Backends loaded dynamically");

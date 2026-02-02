@@ -437,27 +437,40 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     // Set LD_LIBRARY_PATH for the stub libraries on Android side
     setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
 
-    // Load all backends from native library path
-    ggml_backend_load_all_from_path(nativeLibPath);
-
     env->ReleaseStringUTFChars(libPath, nativeLibPath);
     env->ReleaseStringUTFChars(dspLibPath, dspPath);
-    LOGI("Backends loaded dynamically");
 
-    // Initialize llama backend
+    // ========================================================================
+    // IMPORTANT: Hexagon NPU backend is DISABLED for now
+    // ========================================================================
+    // The Hexagon backend initializes successfully but CRASHES with Q4_K models:
+    // - Q4_K tensors cannot be used with Hexagon (only 0.55 MiB of 1059 MiB)
+    // - Crash occurs in llama_context::llama_context during graph building
+    //
+    // To re-enable NPU acceleration:
+    // 1. Convert model to F16 or Q8_0 (Hexagon-compatible format)
+    // 2. Uncomment the ggml_backend_load_all_from_path() call below
+    //
+    // For now, we use CPU-only inference which is stable and still achieves
+    // reasonable performance with ARM NEON optimizations.
+    // ========================================================================
+
+    // DISABLED: ggml_backend_load_all_from_path(nativeLibPath);
+    // This would load Hexagon/OpenCL backends which crash with Q4_K models
+    LOGI("Backend loading: Using CPU-only (Hexagon disabled due to Q4_K incompatibility)");
+
+    // Initialize llama backend (CPU only)
     llama_backend_init();
-    LOGI("llama backend initialized");
+    LOGI("llama backend initialized (CPU)");
 
     // Load model with optimized parameters
     LOGI("Loading model: %s", path);
 
     llama_model_params model_params = llama_model_default_params();
 
-    // CRITICAL: Use single device mode to avoid splitting across CPU/GPU/NPU
-    // This prevents the 264+ graph splits that cause massive overhead
-    model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-    model_params.n_gpu_layers = 99;  // Offload all layers to GPU (OpenCL)
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (all to GPU)");
+    // CPU-only mode: No GPU layer offloading
+    // n_gpu_layers defaults to 0 (all on CPU)
+    LOGI("Model params: CPU-only inference");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
@@ -492,15 +505,14 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    // CRITICAL: Enable Flash Attention for better performance
-    ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    // Flash Attention disabled for CPU-only inference (requires GPU/NPU)
+    // ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 
-    LOGI("Context params (matching official CLI):");
+    LOGI("Context params (CPU-only):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
-    LOGI("  - flash_attn: ENABLED");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

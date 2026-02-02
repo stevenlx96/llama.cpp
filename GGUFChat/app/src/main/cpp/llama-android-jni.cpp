@@ -397,7 +397,7 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
-        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath, jstring dspLibPath) {
     (void)thiz;  // Unused parameter (standard JNI pattern)
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
@@ -415,30 +415,33 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGE("EGL initialization failed - OpenCL GPU acceleration may not be available");
     }
 
-    // Load all backend variants dynamically from native library path
-    // This allows the system to discover and use OpenCL, Hexagon, and CPU backends
+    // Get paths
     const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
-    LOGI("Loading backends from: %s", nativeLibPath);
+    const char* dspPath = env->GetStringUTFChars(dspLibPath, nullptr);
 
-    // CRITICAL: Set environment variables for Hexagon DSP to find HTP skel libraries
-    // This allows the DSP to load libggml-htp-vXX.so from the app's native lib directory
-    // without requiring root access to /vendor/dsp/cdsp/
+    LOGI("Native library path: %s", nativeLibPath);
+    LOGI("DSP library path: %s", dspPath);
+
+    // CRITICAL: Set ADSP_LIBRARY_PATH to the external storage directory
+    // where HTP skel libraries were copied. The DSP can access external storage
+    // but NOT the app's private /data/app/ directory.
     LOGI("Setting Hexagon DSP environment variables...");
 
-    // ADSP_LIBRARY_PATH - Primary path for DSP to find skel libraries
-    setenv("ADSP_LIBRARY_PATH", nativeLibPath, 1);
-    LOGI("  ADSP_LIBRARY_PATH = %s", nativeLibPath);
-
-    // Additional DSP search paths (some devices use these)
-    std::string dspSearchPath = std::string(nativeLibPath) + ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
+    // Build search path: DSP external dir first, then fallback paths
+    std::string dspSearchPath = std::string(dspPath) + ";" +
+                                std::string(nativeLibPath) +
+                                ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
     setenv("ADSP_LIBRARY_PATH", dspSearchPath.c_str(), 1);
-    LOGI("  ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
+    LOGI("ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
 
     // Set LD_LIBRARY_PATH for the stub libraries on Android side
     setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
 
+    // Load all backends from native library path
     ggml_backend_load_all_from_path(nativeLibPath);
+
     env->ReleaseStringUTFChars(libPath, nativeLibPath);
+    env->ReleaseStringUTFChars(dspLibPath, dspPath);
     LOGI("Backends loaded dynamically");
 
     // Initialize llama backend

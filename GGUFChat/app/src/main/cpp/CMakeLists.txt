@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "GGUFChat with OpenCL GPU Acceleration")
+message(STATUS "GGUFChat with NPU/GPU Acceleration")
 message(STATUS "========================================")
 
 # ============================================================================
@@ -47,8 +47,13 @@ else()
     set(HAS_OPENCL OFF)
 endif()
 
-# Note: Hexagon NPU is not supported in Android app sandbox (permission issues)
-# Only OpenCL GPU acceleration is available
+if(EXISTS "${PREBUILT_LIB_DIR}/libggml-hexagon.so")
+    message(STATUS "Found libggml-hexagon.so (NPU acceleration)")
+    set(HAS_HEXAGON ON)
+else()
+    message(STATUS "libggml-hexagon.so not found (NPU acceleration disabled)")
+    set(HAS_HEXAGON OFF)
+endif()
 
 # ============================================================================
 # Create JNI Wrapper
@@ -159,8 +164,8 @@ target_link_options(llama-android PRIVATE
 
 message(STATUS "========================================")
 message(STATUS "CMAKE CONFIGURATION COMPLETE")
-if(HAS_OPENCL)
-    message(STATUS "Acceleration: OpenCL GPU (Adreno)")
+if(HAS_OPENCL OR HAS_HEXAGON)
+    message(STATUS "Acceleration: GPU=${HAS_OPENCL}, NPU=${HAS_HEXAGON}")
 else()
     message(STATUS "Acceleration: CPU only")
 endif()

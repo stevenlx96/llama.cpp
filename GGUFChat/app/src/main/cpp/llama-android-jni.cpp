@@ -403,7 +403,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
 
     LOGI("========================================");
-    LOGI("GGUFChat with OpenCL GPU Acceleration");
+    LOGI("GGUFChat with NPU/GPU Acceleration");
     LOGI("========================================");
 
     // Set log callback for llama.cpp
@@ -415,17 +415,34 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
         LOGE("EGL initialization failed - OpenCL GPU acceleration may not be available");
     }
 
-    // Get native library path
+    // Get paths
     const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
-    (void)dspLibPath;  // Unused (Hexagon DSP not supported in Android app sandbox)
+    const char* dspPath = env->GetStringUTFChars(dspLibPath, nullptr);
 
     LOGI("Native library path: %s", nativeLibPath);
+    LOGI("DSP library path: %s", dspPath);
 
-    // Load all backends from native library path (OpenCL for GPU acceleration)
+    // CRITICAL: Set ADSP_LIBRARY_PATH to the external storage directory
+    // where HTP skel libraries were copied. The DSP can access external storage
+    // but NOT the app's private /data/app/ directory.
+    LOGI("Setting Hexagon DSP environment variables...");
+
+    // Build search path: DSP external dir first, then fallback paths
+    std::string dspSearchPath = std::string(dspPath) + ";" +
+                                std::string(nativeLibPath) +
+                                ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
+    setenv("ADSP_LIBRARY_PATH", dspSearchPath.c_str(), 1);
+    LOGI("ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
+
+    // Set LD_LIBRARY_PATH for the stub libraries on Android side
+    setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
+
+    // Load all backends from native library path (includes Hexagon NPU)
     ggml_backend_load_all_from_path(nativeLibPath);
 
     env->ReleaseStringUTFChars(libPath, nativeLibPath);
-    LOGI("Backends loaded (OpenCL GPU)");
+    env->ReleaseStringUTFChars(dspLibPath, dspPath);
+    LOGI("Backends loaded dynamically");
 
     // Initialize llama backend
     llama_backend_init();
@@ -436,10 +453,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
-    // Use single device mode to avoid splitting across CPU/GPU
+    // Use single device mode to avoid splitting across CPU/GPU/NPU
     model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-    model_params.n_gpu_layers = 99;  // Offload all layers to GPU
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (OpenCL GPU)");
+    model_params.n_gpu_layers = 99;  // Offload all layers to NPU
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
@@ -474,11 +491,17 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
 
-    LOGI("Context params (OpenCL GPU):");
+    // NOTE: Flash Attention is DISABLED for Hexagon NPU
+    // The crash in llama_context::llama_context may be caused by Flash Attention
+    // Official CLI does NOT use flash attention with Hexagon
+    // ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+
+    LOGI("Context params (Hexagon NPU):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
+    LOGI("  - flash_attn: DISABLED (not supported by Hexagon)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 

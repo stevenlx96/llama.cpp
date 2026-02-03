@@ -453,25 +453,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_model_params model_params = llama_model_default_params();
 
-    // CRITICAL: Explicitly select Hexagon NPU device (like --device HTP0 in CLI)
-    // Without this, llama.cpp may select OpenCL GPU which is slower
-    ggml_backend_dev_t htp_device = ggml_backend_dev_by_name("HTP0");
-    static ggml_backend_dev_t devices[2] = {nullptr, nullptr};
-
-    if (htp_device) {
-        LOGI("Found Hexagon NPU device: HTP0");
-        devices[0] = htp_device;
-        devices[1] = nullptr;  // NULL-terminated
-        model_params.devices = devices;
-        LOGI("Model will use Hexagon NPU (HTP0) exclusively");
-    } else {
-        LOGI("Hexagon NPU not found, using default device selection");
-    }
-
     // Use single device mode to avoid splitting across CPU/GPU/NPU
     model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
     model_params.n_gpu_layers = 99;  // Offload all layers to NPU
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=99");
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);

@@ -455,8 +455,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     // Use single device mode to avoid splitting across CPU/GPU/NPU
     model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-    model_params.n_gpu_layers = 99;  // Offload all layers to NPU
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
+    // TEMP: Force CPU-only to diagnose Adreno 830 OpenCL issue
+    model_params.n_gpu_layers = 0;  // CPU only for testing
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=0 (CPU ONLY - DEBUG)");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);

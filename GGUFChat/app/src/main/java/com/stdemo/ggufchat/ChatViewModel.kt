@@ -1,7 +1,8 @@
 package com.stdemo.ggufchat
 
+import android.app.Application
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,9 +17,9 @@ import kotlinx.coroutines.launch
  * 2. 协调用户输入和引擎生成
  * 3. 处理消息列表
  */
-class ChatViewModel : ViewModel() {
+class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val llamaEngine = GGUFChatEngine()
+    private val llamaEngine = GGUFChatEngine(application.applicationContext)
 
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()

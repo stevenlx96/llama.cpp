@@ -1,38 +1,49 @@
-# How to Add Official llama.cpp Libraries
+# How to Add llama.cpp Libraries (CPU-Only)
 
-This directory should contain the **official pre-compiled llama.cpp libraries** for optimal performance.
+This directory should contain the **pre-compiled llama.cpp libraries** for CPU inference.
 
 ## Required Files
 
-Copy these `.so` files from your official `pkg-adb/llama.cpp/lib/` directory to `arm64-v8a/`:
+Copy these `.so` files to `arm64-v8a/`:
 
 ```
 arm64-v8a/
-├── libggml-base.so          (Required)
-├── libggml-cpu.so           (Required)
-├── libggml-hexagon.so       (Required - Hexagon NPU support)
-├── libggml-htp-v73.so       (Required - HTP backend v73)
-├── libggml-htp-v75.so       (Required - HTP backend v75)
-├── libggml-htp-v79.so       (Required - HTP backend v79)
-├── libggml-htp-v81.so       (Required - HTP backend v81)
-├── libggml.so               (Required)
-└── libllama.so              (Required)
+├── libggml-base.so          (Required - GGML base library)
+├── libggml-cpu.so           (Required - CPU backend)
+├── libggml.so               (Required - GGML main library)
+├── libllama.so              (Required - LLaMA inference)
+└── libomp.so                (Optional - OpenMP for parallel CPU)
+```
+
+## Optional: ONNX Runtime (for Intent Recognition)
+
+If you want to enable intent recognition feature:
+
+```
+arm64-v8a/
+└── libonnxruntime.so        (Optional - ONNX Runtime)
 ```
 
 ## Copy Command (Windows)
 
-If your official libraries are in `E:\MyGithub\llama.cpp\pkg-adb\llama.cpp\lib\`:
-
 ```cmd
 cd E:\MyGithub\llama.cpp
-xcopy /Y pkg-adb\llama.cpp\lib\*.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
+xcopy /Y pkg-adb\llama.cpp\lib\libggml-base.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
+xcopy /Y pkg-adb\llama.cpp\lib\libggml-cpu.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
+xcopy /Y pkg-adb\llama.cpp\lib\libggml.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
+xcopy /Y pkg-adb\llama.cpp\lib\libllama.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
+xcopy /Y pkg-adb\llama.cpp\lib\libomp.so GGUFChat\app\src\main\jniLibs\arm64-v8a\
 ```
 
 ## Copy Command (Linux/Mac)
 
 ```bash
 cd ~/llama.cpp
-cp pkg-adb/llama.cpp/lib/*.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+cp pkg-adb/llama.cpp/lib/libggml-base.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+cp pkg-adb/llama.cpp/lib/libggml-cpu.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+cp pkg-adb/llama.cpp/lib/libggml.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+cp pkg-adb/llama.cpp/lib/libllama.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
+cp pkg-adb/llama.cpp/lib/libomp.so GGUFChat/app/src/main/jniLibs/arm64-v8a/
 ```
 
 ## Verify Files
@@ -43,16 +54,7 @@ After copying, verify all files are present:
 ls -lh GGUFChat/app/src/main/jniLibs/arm64-v8a/
 ```
 
-You should see all 9 `.so` files listed above.
-
-## Why Use Official Libraries?
-
-The official llama.cpp libraries are compiled with:
-- ✅ Optimized compiler flags
-- ✅ Correct Hexagon SDK configuration
-- ✅ Proven performance (51+ tokens/s on Hexagon NPU)
-
-Our custom JNI wrapper (`llama-android-jni.cpp`) will link against these libraries to get the same performance as the official `llama-completion` command.
+You should see 5 `.so` files (or 6 with ONNX Runtime).
 
 ## Build After Copying
 

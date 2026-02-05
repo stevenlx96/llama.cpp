@@ -3,13 +3,9 @@
 #include <vector>
 #include <chrono>
 #include <android/log.h>
-#include <dlfcn.h>  // For dlopen/dlsym to load OpenCL dynamically
-#include <unistd.h> // For access(), R_OK, W_OK, F_OK
-#include <errno.h>  // For errno
-#include <EGL/egl.h> // For EGL context initialization (required for OpenCL on Android)
+#include <EGL/egl.h>  // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
 #include "ggml-backend.h"
-#include "ggml-hexagon.h"
 #include <stdlib.h>
 
 #define TAG "LlamaJNI"
@@ -27,17 +23,10 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     // FILTER: Skip verbose/repetitive messages (reduce log spam)
     // ============================================================
 
-    // FILTER 1: TEMPORARILY ENABLED - Show layer assignment for debugging
-    // We need to see which layers go to OpenCL vs Hexagon
-    // if (strstr(text, "layer") != nullptr &&
-    //     strstr(text, "assigned to device") != nullptr) {
-    //     return;  // Skip "load_tensors: layer X assigned to device HTP0"
-    // }
-
-    // FILTER 2: Skip repetitive KV cache layer messages (28+ lines of spam)
+    // FILTER 1: Skip repetitive KV cache layer messages
     if (strstr(text, "llama_kv_cache: layer") != nullptr &&
         strstr(text, "dev =") != nullptr) {
-        return;  // Skip "llama_kv_cache: layer X: dev = HTP0"
+        return;
     }
 
     // FILTER 3: Skip verbose repack progress messages
@@ -119,14 +108,6 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     // ============================================================
     // ALLOW THROUGH: Critical diagnostic information
     // ============================================================
-    // - load_tensors: offloaded X/Y layers
-    // - load_tensors: buffer size messages
-    // - load_tensors: warnings about tensor compatibility
-    // - Backend registration (ggml_backend_*_init)
-    // - OpenCL diagnostics
-    // - Errors and warnings
-    // - Final context creation summary
-    // ============================================================
 
     // Map ggml log levels to Android log priorities
     int android_priority;
@@ -157,6 +138,133 @@ void ggml_log_callback_android(enum ggml_log_level level, const char * text, voi
     } else {
         __android_log_write(android_priority, "llama.cpp", text);
     }
+}
+
+// ============================================================
+// EGL Context Initialization - Required for OpenCL on Android
+// ============================================================
+
+// Many Android devices (especially Qualcomm) require an EGL context
+// to be initialized before OpenCL can be used. This is a Qualcomm-specific
+// requirement where OpenCL shares resources with OpenGL ES.
+static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
+static EGLContext g_egl_context = EGL_NO_CONTEXT;
+static EGLSurface g_egl_surface = EGL_NO_SURFACE;
+
+static bool init_egl_for_opencl() {
+    LOGI("========================================");
+    LOGI("Initializing EGL Context for OpenCL");
+    LOGI("========================================");
+
+    // Get default display
+    g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (g_egl_display == EGL_NO_DISPLAY) {
+        LOGE("eglGetDisplay failed: 0x%x", eglGetError());
+        return false;
+    }
+
+    // Initialize EGL
+    EGLint major, minor;
+    if (!eglInitialize(g_egl_display, &major, &minor)) {
+        LOGE("eglInitialize failed: 0x%x", eglGetError());
+        return false;
+    }
+    LOGI("EGL initialized: version %d.%d", major, minor);
+
+    // Choose config for OpenGL ES 3.0
+    const EGLint config_attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,  // Use pbuffer (offscreen)
+        EGL_BLUE_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_RED_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 0,
+        EGL_NONE
+    };
+
+    EGLConfig config;
+    EGLint num_configs;
+    if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &num_configs)) {
+        LOGE("eglChooseConfig failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+
+    if (num_configs == 0) {
+        LOGE("No suitable EGL config found");
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("EGL config chosen");
+
+    // Create pbuffer surface (1x1 offscreen surface)
+    const EGLint surface_attribs[] = {
+        EGL_WIDTH, 1,
+        EGL_HEIGHT, 1,
+        EGL_NONE
+    };
+    g_egl_surface = eglCreatePbufferSurface(g_egl_display, config, surface_attribs);
+    if (g_egl_surface == EGL_NO_SURFACE) {
+        LOGE("eglCreatePbufferSurface failed: 0x%x", eglGetError());
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        return false;
+    }
+    LOGI("EGL pbuffer surface created");
+
+    // Create OpenGL ES 3.0 context
+    const EGLint context_attribs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,  // OpenGL ES 3.0
+        EGL_NONE
+    };
+    g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        LOGE("eglCreateContext failed: 0x%x", eglGetError());
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        return false;
+    }
+    LOGI("EGL context created (OpenGL ES 3.0)");
+
+    // Make context current
+    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+        LOGE("eglMakeCurrent failed: 0x%x", eglGetError());
+        eglDestroyContext(g_egl_display, g_egl_context);
+        eglDestroySurface(g_egl_display, g_egl_surface);
+        eglTerminate(g_egl_display);
+        g_egl_display = EGL_NO_DISPLAY;
+        g_egl_surface = EGL_NO_SURFACE;
+        g_egl_context = EGL_NO_CONTEXT;
+        return false;
+    }
+
+    LOGI("EGL context made current");
+    LOGI("========================================");
+    LOGI("EGL initialization complete!");
+    LOGI("OpenCL should now be able to access GPU");
+    LOGI("========================================");
+    return true;
+}
+
+static void cleanup_egl() {
+    if (g_egl_display != EGL_NO_DISPLAY) {
+        eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (g_egl_context != EGL_NO_CONTEXT) {
+            eglDestroyContext(g_egl_display, g_egl_context);
+        }
+        if (g_egl_surface != EGL_NO_SURFACE) {
+            eglDestroySurface(g_egl_display, g_egl_surface);
+        }
+        eglTerminate(g_egl_display);
+    }
+    g_egl_display = EGL_NO_DISPLAY;
+    g_egl_context = EGL_NO_CONTEXT;
+    g_egl_surface = EGL_NO_SURFACE;
 }
 
 struct llama_android_context {
@@ -285,267 +393,76 @@ void token_callback(const std::string& token) {
 // This is handled internally by llama.cpp's threadpool when n_threads is set.
 // We rely on the library's default threadpool behavior.
 
-// ============================================================
-// EGL Context Initialization - Required for OpenCL on Android
-// ============================================================
-
-// Many Android devices (especially Qualcomm) require an EGL context
-// to be initialized before OpenCL can be used. This is a Qualcomm-specific
-// requirement where OpenCL shares resources with OpenGL ES.
-static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
-static EGLContext g_egl_context = EGL_NO_CONTEXT;
-static EGLSurface g_egl_surface = EGL_NO_SURFACE;
-
-static bool init_egl_for_opencl() {
-    LOGI("========================================");
-    LOGI("🔧 Initializing EGL Context for OpenCL");
-    LOGI("========================================");
-
-    // Get default display
-    g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (g_egl_display == EGL_NO_DISPLAY) {
-        LOGE("❌ eglGetDisplay failed: 0x%x", eglGetError());
-        return false;
-    }
-
-    // Initialize EGL
-    EGLint major, minor;
-    if (!eglInitialize(g_egl_display, &major, &minor)) {
-        LOGE("❌ eglInitialize failed: 0x%x", eglGetError());
-        return false;
-    }
-    LOGI("✅ EGL initialized: version %d.%d", major, minor);
-
-    // Choose config for OpenGL ES 3.0
-    const EGLint config_attribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,  // Use pbuffer (offscreen)
-        EGL_BLUE_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_RED_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 0,
-        EGL_NONE
-    };
-
-    EGLConfig config;
-    EGLint num_configs;
-    if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &num_configs)) {
-        LOGE("❌ eglChooseConfig failed: 0x%x", eglGetError());
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-
-    if (num_configs == 0) {
-        LOGE("❌ No suitable EGL config found");
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-    LOGI("✅ EGL config chosen");
-
-    // Create pbuffer surface (1x1 offscreen surface)
-    const EGLint surface_attribs[] = {
-        EGL_WIDTH, 1,
-        EGL_HEIGHT, 1,
-        EGL_NONE
-    };
-    g_egl_surface = eglCreatePbufferSurface(g_egl_display, config, surface_attribs);
-    if (g_egl_surface == EGL_NO_SURFACE) {
-        LOGE("❌ eglCreatePbufferSurface failed: 0x%x", eglGetError());
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-    LOGI("✅ EGL pbuffer surface created");
-
-    // Create OpenGL ES 3.0 context
-    const EGLint context_attribs[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 3,  // OpenGL ES 3.0
-        EGL_NONE
-    };
-    g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
-    if (g_egl_context == EGL_NO_CONTEXT) {
-        LOGE("❌ eglCreateContext failed: 0x%x", eglGetError());
-        eglDestroySurface(g_egl_display, g_egl_surface);
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        g_egl_surface = EGL_NO_SURFACE;
-        return false;
-    }
-    LOGI("✅ EGL context created (OpenGL ES 3.0)");
-
-    // Make context current
-    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
-        LOGE("❌ eglMakeCurrent failed: 0x%x", eglGetError());
-        eglDestroyContext(g_egl_display, g_egl_context);
-        eglDestroySurface(g_egl_display, g_egl_surface);
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        g_egl_surface = EGL_NO_SURFACE;
-        g_egl_context = EGL_NO_CONTEXT;
-        return false;
-    }
-
-    LOGI("✅ EGL context made current");
-    LOGI("========================================");
-    LOGI("✅ EGL initialization complete!");
-    LOGI("   OpenCL should now be able to access GPU");
-    LOGI("========================================");
-    return true;
-}
-
 extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
-
-        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath) {
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath, jstring dspLibPath) {
     (void)thiz;  // Unused parameter (standard JNI pattern)
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
-    const char* lib_dir = env->GetStringUTFChars(libPath, nullptr);
 
     LOGI("========================================");
-    LOGI("🚀 GGUFChat Hexagon NPU Initialization");
+    LOGI("GGUFChat with NPU/GPU Acceleration");
     LOGI("========================================");
-
-    // 【关键修改 1】：设置 DSP 环境变量
-    // 必须让 FastRPC 知道去哪里找 libggml_hexagon_skel.so
-    // lib_dir 通常是 /data/app/.../lib/arm64
-    if (lib_dir) {
-        std::string adsp_path = std::string(lib_dir) + ";/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp";
-        setenv("ADSP_LIBRARY_PATH", adsp_path.c_str(), 1);
-        LOGI("✓ ADSP_LIBRARY_PATH set to: %s", adsp_path.c_str());
-    }
 
     // Set log callback for llama.cpp
     llama_log_set(ggml_log_callback_android, nullptr);
 
     // CRITICAL: Initialize EGL context FIRST (required for OpenCL on Qualcomm Adreno GPU)
     // This must be done before loading backends to allow OpenCL to detect GPU devices
-    LOGI("========================================");
-    LOGI("🔧 Initializing EGL Context for OpenCL");
-    LOGI("========================================");
     if (!init_egl_for_opencl()) {
-        LOGE("⚠️ EGL initialization failed - OpenCL GPU acceleration may not be available");
+        LOGE("EGL initialization failed - OpenCL GPU acceleration may not be available");
     }
 
-    // CRITICAL: Pre-load OpenCL library with RTLD_GLOBAL before loading backends
-    // This ensures OpenCL symbols are globally available when libggml-opencl.so loads
-    LOGI("========================================");
-    LOGI("🔍 OpenCL Diagnostics - Pre-loading libOpenCL.so");
-    LOGI("========================================");
+    // Get paths
+    const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
+    const char* dspPath = env->GetStringUTFChars(dspLibPath, nullptr);
 
-    void* opencl_handle = dlopen("libOpenCL.so", RTLD_NOW | RTLD_GLOBAL);
-    if (opencl_handle != nullptr) {
-        LOGI("✅ SUCCESS: libOpenCL.so loaded via dlopen()");
+    LOGI("Native library path: %s", nativeLibPath);
+    LOGI("DSP library path: %s", dspPath);
 
-        // Try to get clGetPlatformIDs function to test OpenCL availability
-        typedef int (*clGetPlatformIDs_t)(unsigned int, void*, unsigned int*);
-        clGetPlatformIDs_t clGetPlatformIDs_fn = (clGetPlatformIDs_t)dlsym(opencl_handle, "clGetPlatformIDs");
+    // CRITICAL: Set ADSP_LIBRARY_PATH to the external storage directory
+    // where HTP skel libraries were copied. The DSP can access external storage
+    // but NOT the app's private /data/app/ directory.
+    LOGI("Setting Hexagon DSP environment variables...");
 
-        if (clGetPlatformIDs_fn != nullptr) {
-            LOGI("✅ clGetPlatformIDs function found in libOpenCL.so");
+    // Build search path: DSP external dir first, then fallback paths
+    std::string dspSearchPath = std::string(dspPath) + ";" +
+                                std::string(nativeLibPath) +
+                                ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
+    setenv("ADSP_LIBRARY_PATH", dspSearchPath.c_str(), 1);
+    LOGI("ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
 
-            // Try to query OpenCL platforms
-            unsigned int num_platforms = 0;
-            int result = clGetPlatformIDs_fn(0, nullptr, &num_platforms);
+    // Set LD_LIBRARY_PATH for the stub libraries on Android side
+    setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
 
-            if (result == 0) {  // CL_SUCCESS = 0
-                if (num_platforms > 0) {
-                    LOGI("✅ OpenCL query successful! Found %u OpenCL platform(s)", num_platforms);
-                    LOGI("   OpenCL GPU acceleration should be available");
-                } else {
-                    LOGE("⚠️ OpenCL query returned 0 platforms");
-                    LOGE("   GPU is not accessible via OpenCL on this device");
-                }
-            } else {
-                LOGE("❌ OpenCL query FAILED with error code: %d", result);
-                LOGE("   This means OpenCL library exists but GPU is not accessible");
-                LOGE("   Possible reasons:");
-                LOGE("   1. Device doesn't support OpenCL");
-                LOGE("   2. GPU drivers don't expose OpenCL interface");
-                LOGE("   3. SELinux policies blocking GPU access");
-            }
-        } else {
-            LOGE("❌ clGetPlatformIDs function NOT found in libOpenCL.so");
-            LOGE("   dlerror: %s", dlerror());
-        }
+    // Load all backends from native library path (includes Hexagon NPU)
+    ggml_backend_load_all_from_path(nativeLibPath);
 
-        // CRITICAL: Keep the handle open! Don't call dlclose()
-        // ggml-opencl.so needs these symbols to be globally available
-        LOGI("✅ libOpenCL.so kept loaded with RTLD_GLOBAL for ggml-opencl.so");
-    } else {
-        LOGE("❌ FAILED to load libOpenCL.so via dlopen()");
-        LOGE("   dlerror: %s", dlerror());
-        LOGE("   OpenCL GPU acceleration will NOT be available!");
-        LOGE("   Possible reasons:");
-        LOGE("   1. libOpenCL.so not present in /system/lib64/ or /vendor/lib64/");
-        LOGE("   2. Device doesn't have OpenCL support");
-        LOGE("   Will fall back to Hexagon NPU or CPU");
-    }
-    LOGI("========================================");
+    env->ReleaseStringUTFChars(libPath, nativeLibPath);
+    env->ReleaseStringUTFChars(dspLibPath, dspPath);
+    LOGI("Backends loaded dynamically");
 
-    // Load all backends from the native library directory (matches official example)
-    // This will automatically load and register all backend .so files:
-    // - libggml-opencl.so -> OpenCL backend
-    // - libggml-hexagon.so -> Hexagon (HTP) backend
-    // - etc.
-    LOGI("========================================");
-    LOGI("🔧 Loading all backends from: %s", lib_dir);
-    LOGI("========================================");
-    ggml_backend_load_all_from_path(lib_dir);
-    LOGI("✓ All backends loaded from directory");
-
-    // Initialize llama backend (this will register CPU backend automatically)
+    // Initialize llama backend
     llama_backend_init();
-    LOGI("✓ llama backend initialized");
+    LOGI("llama backend initialized");
 
-    // Enumerate available backends (for diagnostic logging)
-    LOGI("========================================");
-    LOGI("📊 Backend Registration Summary");
-    LOGI("========================================");
-
-    size_t reg_count = ggml_backend_reg_count();
-    LOGI("Total registered backends: %zu", reg_count);
-
-    for (size_t i = 0; i < reg_count; ++i) {
-        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
-        const char* reg_name = ggml_backend_reg_name(reg);
-        size_t dev_count = ggml_backend_reg_dev_count(reg);
-
-        LOGI("Backend [%zu]: %s, Devices: %zu", i, reg_name, dev_count);
-
-        for (size_t j = 0; j < dev_count; ++j) {
-            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
-            if (dev == nullptr) {
-                LOGE("  ⚠️ Device [%zu] is NULL", j);
-                continue;
-            }
-
-            const char* dev_name = ggml_backend_dev_name(dev);
-            const char* dev_desc = ggml_backend_dev_description(dev);
-            LOGI("  - Device [%zu]: %s (%s)", j, dev_name, dev_desc);
-        }
-    }
-    LOGI("========================================");
-
-    // Load model with default parameters (let llama.cpp choose backends automatically)
-    // This matches the official example approach
-    LOGI("----------------------------------------");
-    LOGI("Loading model...");
+    // Load model with optimized parameters
+    LOGI("Loading model: %s", path);
 
     llama_model_params model_params = llama_model_default_params();
-    // NOTE: We don't set model_params.devices - llama.cpp will automatically
-    // select the best available backends (Hexagon NPU, OpenCL GPU, or CPU)
+
+    // Use single device mode to avoid splitting across CPU/GPU/NPU
+    model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
+    model_params.n_gpu_layers = 99;  // Offload all layers to NPU
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
-        LOGE("❌ Failed to load model");
+        LOGE("Failed to load model");
         return 0;
     }
 
@@ -553,49 +470,9 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
     int32_t n_layer = llama_model_n_layer(model);
 
-    LOGI("✓ Model loaded successfully");
+    LOGI("Model loaded successfully");
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
-
-    // 🔍 CRITICAL DEBUG: Check which backend the model weights are actually on
-    LOGI("========================================");
-    LOGI("🔍 BACKEND ALLOCATION ANALYSIS");
-    LOGI("========================================");
-
-    // Check layer offload status from llama.cpp
-    // The layer assignment messages should have been printed above (we enabled them)
-    LOGI("NOTE: Check above for 'layer X assigned to device Y' messages");
-    LOGI("  - Layers assigned to 'Adreno (OpenCL)' = GPU acceleration");
-    LOGI("  - Layers assigned to 'HTP0' = Hexagon NPU acceleration");
-    LOGI("  - Layers assigned to 'CPU' = CPU fallback");
-    LOGI("========================================");
-
-    // CRITICAL: Check if layers were actually offloaded to NPU
-    LOGI("----------------------------------------");
-    LOGI("⚠️ OFFLOAD STATUS CHECK:");
-
-    // Check if GPU offload is supported
-    bool gpu_offload_supported = llama_supports_gpu_offload();
-    LOGI("  GPU offload supported: %s", gpu_offload_supported ? "YES" : "NO");
-
-    if (!gpu_offload_supported) {
-        LOGE("  ❌ GPU offload NOT supported!");
-        LOGE("  This means llama.cpp cannot find any GPU-type backends!");
-        LOGE("  Checking backend types...");
-
-        // Debug: check what backend types are available
-        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-            const char* dev_name = ggml_backend_dev_name(dev);
-            ggml_backend_dev_props props;
-            ggml_backend_dev_get_props(dev, &props);
-            LOGI("    Device %zu: %s, type=%d", i, dev_name, props.type);
-        }
-    } else {
-        LOGI("  ✓ GPU offload is supported!");
-        LOGI("  Check above for 'offloaded X/Y layers' message");
-    }
-    LOGI("----------------------------------------");
 
     // Create context with official parameters
     // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
@@ -604,22 +481,27 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     llama_context_params ctx_params = llama_context_default_params();
 
-    // Official configuration matching examples/llama.android
+    // Configuration matching official command line tool
     const int DEFAULT_CONTEXT_SIZE = 8192;
-    const int BATCH_SIZE = 512;  // Official example uses 512
+    const int BATCH_SIZE = 128;  // Official uses 128, not 512!
 
     ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
     ctx_params.n_batch = BATCH_SIZE;
     ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-    // NOTE: flash_attn_type is left as default (llama.cpp will decide)
 
-    LOGI("Context params (matching official example):");
+    // NOTE: Flash Attention is DISABLED for Hexagon NPU
+    // The crash in llama_context::llama_context may be caused by Flash Attention
+    // Official CLI does NOT use flash attention with Hexagon
+    // ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+
+    LOGI("Context params (Hexagon NPU):");
     LOGI("  - n_ctx: %d", ctx_params.n_ctx);
     LOGI("  - n_batch: %d", ctx_params.n_batch);
     LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
     LOGI("  - threads: %d", nThreads);
+    LOGI("  - flash_attn: DISABLED (not supported by Hexagon)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 
@@ -843,8 +725,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
 
     llama_sampler_free(sampler);
 
-    // CRITICAL: Synchronize to ensure all backend operations complete
-    // This is especially important for Hexagon to release resources properly
+    // Synchronize to ensure all backend operations complete
     llama_synchronize(ctx);
     LOGD("Backend synchronized after generation");
 
@@ -884,11 +765,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
              avg_token_time, 1000.0 / avg_token_time);
     }
 
-    LOGI("========================================");
-    LOGI("⚠️  If speed is still slow (<20 tokens/s):");
-    LOGI("   1. Check layer assignments above");
-    LOGI("   2. Verify OpenCL/Hexagon are actually used");
-    LOGI("   3. Check if all layers went to CPU instead");
     LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
@@ -1148,8 +1024,7 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 
     llama_sampler_free(sampler);
 
-    // CRITICAL: Synchronize to ensure all backend operations complete
-    // This is especially important for Hexagon to release resources properly
+    // Synchronize to ensure all backend operations complete
     llama_synchronize(ctx);
     LOGD("Backend synchronized after generation");
 
@@ -1190,11 +1065,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     }
 
     LOGI("========================================");
-    LOGI("⚠️  If speed is still slow (<20 tokens/s):");
-    LOGI("   1. Check layer assignments above");
-    LOGI("   2. Verify OpenCL/Hexagon are actually used");
-    LOGI("   3. Check if all layers went to CPU instead");
-    LOGI("========================================");
 
     LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);
 
@@ -1228,6 +1098,10 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
     }
 
     llama_backend_free();
+
+    // Cleanup EGL resources
+    cleanup_egl();
+    LOGD("EGL resources cleaned up");
 }
 
 }  // extern "C"

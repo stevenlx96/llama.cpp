@@ -1,20 +1,23 @@
 package com.stdemo.ggufchat
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-class GGUFChatEngine {
+class GGUFChatEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "GGUFChatEngine"
+        private const val DSP_LIB_DIR = "dsp_libs"  // Subdirectory for DSP libraries
     }
 
     // Native methods
-    private external fun nativeInit(modelPath: String, nThreads: Int, libPath: String): Long
+    private external fun nativeInit(modelPath: String, nThreads: Int, libPath: String, dspLibPath: String): Long
 
     // Static (non-streaming) completion - returns complete response at once
     private external fun nativeCompletion(
@@ -51,7 +54,8 @@ class GGUFChatEngine {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isGenerating = AtomicBoolean(false)
     private val shouldStopGeneration = AtomicBoolean(false)
-    private var nativeLibraryPath: String = ""  // Store native lib path for backend loading
+    private var nativeLibraryPath: String = ""
+    private var dspLibraryPath: String = ""  // Path for DSP/HTP libraries (accessible by DSP)
 
     // Configuration and history
     private val promptBuilder = ChatPromptBuilder()
@@ -60,57 +64,13 @@ class GGUFChatEngine {
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
-            // --- 核心修复：注入 NPU 搜索路径 ---
-            // 尝试通过多种方式获取 nativeLibraryDir
-            val nativeLibDir = try {
-                // 1. 如果能拿到 context 就用 context (最标准)
-                // 这里我们尝试通过类加载器找到路径，或者在后面 loadModel 时再设置
-                // 但最简单的办法是在 System.loadLibrary 之前拿到当前应用的路径
+            // Get native library path
+            nativeLibraryPath = context.applicationInfo.nativeLibraryDir
+            Log.d(TAG, "Native library path: $nativeLibraryPath")
 
-                // 这种方式不需要依赖隐藏 API
-                val info = java.io.File("/proc/self/maps").takeIf { it.exists() }
-                // 实际上，更通用的做法是在 Engine 初始化时由外部传入 Context
-                // 或者直接通过反射获取当前的 Application (比 AppGlobals 安全一点点)
-                val clazz = Class.forName("android.app.ActivityThread")
-                val method = clazz.getDeclaredMethod("currentApplication")
-                val app = method.invoke(null) as? android.app.Application
-                app?.applicationContext?.applicationInfo?.nativeLibraryDir
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not resolve nativeLibDir via reflection: ${e.message}")
-                null
-            }
-
-            if (nativeLibDir != null) {
-                // CRITICAL: Save native library path for backend loading in JNI
-                nativeLibraryPath = nativeLibDir
-
-                try {
-                    // CRITICAL FIX: Use nativeLibDir directly instead of deploying to filesDir
-                    // HTP libraries are in jniLibs/arm64-v8a/ and automatically installed to nativeLibDir
-                    // The DSP can access nativeLibDir but NOT filesDir (/data/user/0/.../files/)
-                    val adspPath = "$nativeLibDir;/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp"
-
-                    android.system.Os.setenv("ADSP_LIBRARY_PATH", adspPath, true)
-                    android.system.Os.setenv("CDSP_LIBRARY_PATH", adspPath, true)
-
-                    // EXPERIMENT: Enable Hexagon experimental features for REPACK support
-                    android.system.Os.setenv("GGML_HEXAGON_EXPERIMENTAL", "1", true)
-
-                    // Disable all debug logging - too much spam, can't see performance stats
-                    android.system.Os.setenv("GGML_SCHED_DEBUG", "0", true)
-                    android.system.Os.setenv("GGML_HEXAGON_VERBOSE", "0", true)
-
-                    // CRITICAL: Disable repack verbose logging (user request)
-                    android.system.Os.setenv("GGML_LOG_DISABLE_LOGS", "1", true)
-
-                    Log.d(TAG, "NPU search path successfully configured:")
-                    Log.d(TAG, "  Native lib dir: $nativeLibDir")
-                    Log.d(TAG, "  ADSP_LIBRARY_PATH: $adspPath")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to set environment variables", e)
-                }
-            }
-            // --- 修复结束 ---
+            // Prepare DSP libraries in external storage (where DSP can access them)
+            dspLibraryPath = prepareDspLibraries()
+            Log.d(TAG, "DSP library path: $dspLibraryPath")
 
             System.loadLibrary("llama-android")
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
@@ -124,6 +84,40 @@ class GGUFChatEngine {
         }
     }
 
+    /**
+     * Copy HTP skel libraries to external storage directory where DSP can access them.
+     * The DSP cannot access app-private directories due to Android sandboxing,
+     * but it CAN access the app's external files directory.
+     */
+    private fun prepareDspLibraries(): String {
+        val dspDir = File(context.getExternalFilesDir(null), DSP_LIB_DIR)
+        if (!dspDir.exists()) {
+            dspDir.mkdirs()
+        }
+
+        val nativeLibDir = File(nativeLibraryPath)
+        val htpLibs = nativeLibDir.listFiles { file ->
+            file.name.startsWith("libggml-htp-") && file.name.endsWith(".so")
+        } ?: emptyArray()
+
+        Log.d(TAG, "Found ${htpLibs.size} HTP libraries to copy for DSP access")
+
+        for (htpLib in htpLibs) {
+            val destFile = File(dspDir, htpLib.name)
+            // Only copy if not exists or different size (simple check)
+            if (!destFile.exists() || destFile.length() != htpLib.length()) {
+                Log.d(TAG, "Copying ${htpLib.name} to DSP-accessible directory...")
+                htpLib.copyTo(destFile, overwrite = true)
+                // Make readable by others (DSP runs in different process)
+                destFile.setReadable(true, false)
+            } else {
+                Log.d(TAG, "${htpLib.name} already in DSP directory")
+            }
+        }
+
+        return dspDir.absolutePath
+    }
+
     suspend fun loadModel(path: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val file = java.io.File(path)
@@ -134,13 +128,12 @@ class GGUFChatEngine {
             Log.d(TAG, "Loading model from: $path")
             Log.d(TAG, "Model size: ${file.length() / 1024 / 1024} MB")
 
-            // Match official Hexagon config: use 6 threads (not all cores)
-            // Official: --poll 1000 -t 6 --cpu-mask 0xfc --cpu-strict 1
-            // Using 6 threads helps avoid small cores (CPU 0-1) on Snapdragon
-            val numThreads = 6
-            Log.d(TAG, "Using $numThreads threads (official config)")
-            Log.d(TAG, "Passing library path to JNI: $nativeLibraryPath")
-            contextPtr = nativeInit(path, numThreads, nativeLibraryPath)
+            // Use available CPU cores for inference
+            val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(4, 8)
+            Log.d(TAG, "Using $numThreads threads for inference")
+            Log.d(TAG, "Native library path: $nativeLibraryPath")
+            Log.d(TAG, "DSP library path: $dspLibraryPath")
+            contextPtr = nativeInit(path, numThreads, nativeLibraryPath, dspLibraryPath)
 
             if (contextPtr == 0L) {
                 return@withContext Result.failure(Exception("Model loading failed"))

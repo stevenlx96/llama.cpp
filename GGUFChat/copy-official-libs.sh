@@ -1,6 +1,5 @@
 #!/bin/bash
-# Copy official llama.cpp libraries to GGUFChat project
-# Excludes OpenCL to avoid system library dependencies
+# Copy llama.cpp libraries to GGUFChat project (with optional NPU/GPU acceleration)
 
 set -e
 
@@ -11,43 +10,68 @@ SRC_LIB="../pkg-adb/llama.cpp/lib"
 DEST_LIB="app/src/main/jniLibs/arm64-v8a"
 
 echo "========================================="
-echo "Copying Official llama.cpp Libraries"
+echo "Copying llama.cpp Libraries"
+echo "(with NPU/GPU acceleration support)"
 echo "========================================="
 
 # Create destination directory
 mkdir -p "$DEST_LIB"
 
-# Libraries to copy (EXCLUDE libggml-opencl.so!)
+# Required core libraries
 LIBS=(
     "libggml-base.so"
     "libggml-cpu.so"
-    "libggml-hexagon.so"
-    "libggml-htp-v73.so"
-    "libggml-htp-v75.so"
-    "libggml-htp-v79.so"
-    "libggml-htp-v81.so"
     "libggml.so"
     "libllama.so"
 )
 
-# Copy each library
+# Copy each required library
 for lib in "${LIBS[@]}"; do
     if [ -f "$SRC_LIB/$lib" ]; then
         cp -v "$SRC_LIB/$lib" "$DEST_LIB/"
-        echo "✓ Copied $lib"
+        echo "Copied $lib"
     else
-        echo "✗ NOT FOUND: $lib"
+        echo "NOT FOUND: $lib"
         exit 1
     fi
 done
 
+# Optional: Copy OpenMP library if exists
+if [ -f "$SRC_LIB/libomp.so" ]; then
+    cp -v "$SRC_LIB/libomp.so" "$DEST_LIB/"
+    echo "Copied libomp.so (OpenMP)"
+fi
+
+# Optional: Copy OpenCL backend (GPU acceleration)
+if [ -f "$SRC_LIB/libggml-opencl.so" ]; then
+    cp -v "$SRC_LIB/libggml-opencl.so" "$DEST_LIB/"
+    echo "Copied libggml-opencl.so (GPU acceleration)"
+fi
+
+# Optional: Copy Hexagon backend (NPU acceleration)
+if [ -f "$SRC_LIB/libggml-hexagon.so" ]; then
+    cp -v "$SRC_LIB/libggml-hexagon.so" "$DEST_LIB/"
+    echo "Copied libggml-hexagon.so (NPU acceleration)"
+fi
+
+# Optional: Copy Hexagon HTP libraries
+for htp_lib in "$SRC_LIB"/libggml-htp*.so; do
+    if [ -f "$htp_lib" ]; then
+        cp -v "$htp_lib" "$DEST_LIB/"
+        echo "Copied $(basename $htp_lib) (Hexagon HTP)"
+    fi
+done
+
 echo "========================================="
-echo "✓ All libraries copied successfully!"
+echo "All libraries copied successfully!"
 echo "========================================="
 echo ""
 echo "Copied to: $DEST_LIB"
 echo ""
 echo "Libraries:"
 ls -lh "$DEST_LIB"/*.so
+echo ""
+echo "Note: Backends (CPU, OpenCL, Hexagon) are loaded"
+echo "      dynamically at runtime via ggml_backend_load_all_from_path()"
 echo ""
 echo "Next step: ./gradlew assembleDebug"

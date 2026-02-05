@@ -5,20 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "CMAKE BUILD WITH PREBUILT LIBS (matching Docker flags)")
+message(STATUS "GGUFChat with NPU/GPU Acceleration")
 message(STATUS "========================================")
-
-# ============================================================================
-# CRITICAL: Match Docker compilation flags EXACTLY!
-# Reference: docs/backend/hexagon/CMakeUserPresets.json
-# ============================================================================
-
-# CRITICAL: Use SAME flags as Docker build to ensure ABI compatibility!
-# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7a+fp16 -fvectorize -ffp-model=fast -fno-finite-math-only -D_GNU_SOURCE")
-
-message(STATUS "C FLAGS: ${CMAKE_C_FLAGS}")
-message(STATUS "CXX FLAGS: ${CMAKE_CXX_FLAGS}")
 
 # ============================================================================
 # Paths Setup
@@ -35,15 +23,10 @@ message(STATUS "Include dir: ${INCLUDE_DIR}")
 # Verify Required Files
 # ============================================================================
 
+# Core libraries (required)
 set(REQUIRED_LIBS
         "libggml-base.so"
         "libggml-cpu.so"
-        "libggml-opencl.so"
-        "libggml-hexagon.so"
-        "libggml-htp-v73.so"
-        "libggml-htp-v75.so"
-        "libggml-htp-v79.so"
-        "libggml-htp-v81.so"
         "libggml.so"
         "libllama.so"
 )
@@ -52,11 +35,28 @@ foreach(lib ${REQUIRED_LIBS})
     if(NOT EXISTS "${PREBUILT_LIB_DIR}/${lib}")
         message(FATAL_ERROR "ERROR: ${lib} not found at ${PREBUILT_LIB_DIR}/${lib}")
     endif()
-    message(STATUS "✓ Found ${lib}")
+    message(STATUS "Found ${lib}")
 endforeach()
 
+# Check for optional acceleration libraries
+if(EXISTS "${PREBUILT_LIB_DIR}/libggml-opencl.so")
+    message(STATUS "Found libggml-opencl.so (GPU acceleration)")
+    set(HAS_OPENCL ON)
+else()
+    message(STATUS "libggml-opencl.so not found (GPU acceleration disabled)")
+    set(HAS_OPENCL OFF)
+endif()
+
+if(EXISTS "${PREBUILT_LIB_DIR}/libggml-hexagon.so")
+    message(STATUS "Found libggml-hexagon.so (NPU acceleration)")
+    set(HAS_HEXAGON ON)
+else()
+    message(STATUS "libggml-hexagon.so not found (NPU acceleration disabled)")
+    set(HAS_HEXAGON OFF)
+endif()
+
 # ============================================================================
-# Create JNI Wrapper with MATCHING FLAGS
+# Create JNI Wrapper
 # ============================================================================
 
 # Base source files
@@ -67,14 +67,14 @@ set(LLAMA_ANDROID_SOURCES
 # Check if ONNX Runtime library exists (optional feature)
 set(ONNXRUNTIME_LIB "${PREBUILT_LIB_DIR}/libonnxruntime.so")
 if(EXISTS "${ONNXRUNTIME_LIB}")
-    message(STATUS "✓ ONNX Runtime found - enabling intent recognition")
+    message(STATUS "ONNX Runtime found - enabling intent recognition")
     list(APPEND LLAMA_ANDROID_SOURCES
         intent_jni.cpp
         intent_recognizer.cpp
     )
     set(ENABLE_INTENT_RECOGNITION ON)
 else()
-    message(STATUS "⚠ ONNX Runtime not found - intent recognition disabled")
+    message(STATUS "ONNX Runtime not found - intent recognition disabled")
     set(ENABLE_INTENT_RECOGNITION OFF)
 endif()
 
@@ -82,98 +82,64 @@ add_library(llama-android SHARED ${LLAMA_ANDROID_SOURCES})
 
 target_include_directories(llama-android PRIVATE "${INCLUDE_DIR}")
 
-# Link system libraries
+# ============================================================================
+# Link System Libraries
+# ============================================================================
+
+# Core system libraries
 target_link_libraries(llama-android PRIVATE
         android
         log
         m
         atomic
-        EGL          # For EGL context (required for OpenCL on Qualcomm)
-        GLESv3       # For OpenGL ES 3.0 (required for OpenCL)
 )
 
-# Try to find and link OpenCL (optional - for Adreno GPU acceleration)
-find_library(OPENCL_LIBRARY OpenCL)
-if(OPENCL_LIBRARY)
-    target_link_libraries(llama-android PRIVATE ${OPENCL_LIBRARY})
-    message(STATUS "✓ OpenCL library found: ${OPENCL_LIBRARY}")
-else()
-    message(STATUS "⚠ OpenCL library not found (GPU acceleration may be unavailable)")
-endif()
+# EGL is required for OpenCL on Qualcomm Adreno GPUs
+# Must be linked even if we don't use OpenCL directly
+target_link_libraries(llama-android PRIVATE EGL)
 
 # ============================================================================
 # Import Prebuilt Libraries
 # ============================================================================
 
-# ggml-base
-add_library(ggml_base_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_base_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-base.so"
-)
+# Note: We link to llama.so and ggml.so at compile time.
+# Other backends (CPU, OpenCL, Hexagon) are loaded dynamically at runtime
+# via ggml_backend_load_all_from_path()
 
-# ggml-cpu
-add_library(ggml_cpu_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_cpu_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-cpu.so"
-        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-)
-
-# ggml-opencl
-add_library(ggml_opencl_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_opencl_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-opencl.so"
-        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-)
-
-# ggml-hexagon
-add_library(ggml_hexagon_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_hexagon_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml-hexagon.so"
-        INTERFACE_LINK_LIBRARIES ggml_base_prebuilt
-)
-
-# ggml
-add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
-set_target_properties(ggml_prebuilt PROPERTIES
-        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
-        INTERFACE_LINK_LIBRARIES "ggml_base_prebuilt;ggml_cpu_prebuilt;ggml_opencl_prebuilt;ggml_hexagon_prebuilt"
-)
-
-# llama
+# llama (main library)
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
 set_target_properties(llama_prebuilt PROPERTIES
         IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libllama.so"
-        INTERFACE_LINK_LIBRARIES "ggml_prebuilt;ggml_cpu_prebuilt;ggml_opencl_prebuilt;ggml_hexagon_prebuilt;ggml_base_prebuilt"
+)
+
+# ggml (required for ggml_backend_* functions)
+add_library(ggml_prebuilt SHARED IMPORTED GLOBAL)
+set_target_properties(ggml_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${PREBUILT_LIB_DIR}/libggml.so"
 )
 
 # ============================================================================
-# ONNX Runtime (for Intent Recognition)
+# Link Libraries
 # ============================================================================
 
-# Link ONNX Runtime if available (already checked above)
 if(ENABLE_INTENT_RECOGNITION)
-    # Use direct path instead of IMPORTED library to ensure proper linking on Windows NDK
     target_link_libraries(llama-android PRIVATE
         llama_prebuilt
+        ggml_prebuilt
         "${ONNXRUNTIME_LIB}"
     )
     target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
-
-    message(STATUS "  Intent recognition feature: ENABLED")
-    message(STATUS "  ONNX Runtime library: ${ONNXRUNTIME_LIB}")
+    message(STATUS "Intent recognition: ENABLED")
 else()
-    target_link_libraries(llama-android PRIVATE llama_prebuilt)
-
-    message(STATUS "  Intent recognition feature: DISABLED")
-    message(STATUS "  To enable intent recognition:")
-    message(STATUS "    1. Download ONNX Runtime Android AAR (v1.17.0) from:")
-    message(STATUS "       https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/")
-    message(STATUS "    2. Extract libonnxruntime.so for ${ANDROID_ABI} and place it in:")
-    message(STATUS "       ${PREBUILT_LIB_DIR}/")
+    target_link_libraries(llama-android PRIVATE
+        llama_prebuilt
+        ggml_prebuilt
+    )
+    message(STATUS "Intent recognition: DISABLED")
 endif()
 
 # ============================================================================
-# Compiler Options - MATCH DOCKER!
+# Compiler Options
 # ============================================================================
 
 target_compile_options(llama-android PRIVATE
@@ -197,6 +163,10 @@ target_link_options(llama-android PRIVATE
 )
 
 message(STATUS "========================================")
-message(STATUS "✓ CMAKE CONFIGURATION COMPLETE")
-message(STATUS "Using prebuilt .so with MATCHING Docker flags")
+message(STATUS "CMAKE CONFIGURATION COMPLETE")
+if(HAS_OPENCL OR HAS_HEXAGON)
+    message(STATUS "Acceleration: GPU=${HAS_OPENCL}, NPU=${HAS_HEXAGON}")
+else()
+    message(STATUS "Acceleration: CPU only")
+endif()
 message(STATUS "========================================")

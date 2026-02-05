@@ -455,9 +455,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     // Use single device mode to avoid splitting across CPU/GPU/NPU
     model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-    // TEMP: Force CPU-only to diagnose Adreno 830 OpenCL issue
-    model_params.n_gpu_layers = 0;  // CPU only for testing
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=0 (CPU ONLY - DEBUG)");
+    model_params.n_gpu_layers = 99;  // Offload all layers to NPU
+    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
 
     llama_model* model = llama_model_load_from_file(path, model_params);
     env->ReleaseStringUTFChars(modelPath, path);
@@ -474,27 +473,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
     LOGI("Model loaded successfully");
     LOGI("  Vocab size: %d", n_vocab);
     LOGI("  Total layers: %d", n_layer);
-
-    // ============================================================
-    // DEBUG: 验证 tokenizer 是否正确加载
-    // ============================================================
-    LOGI("========================================");
-    LOGI("🔍 DEBUG: Tokenizer validation");
-    LOGI("========================================");
-    for (int i = 0; i < 10 && i < n_vocab; i++) {
-        char buf[64];
-        int len = llama_token_to_piece(vocab, i, buf, sizeof(buf) - 1, 0, false);
-        if (len > 0) {
-            buf[len] = '\0';
-            LOGI("  Token %d -> '%s' (len=%d)", i, buf, len);
-        } else {
-            LOGI("  Token %d -> [ERROR: len=%d]", i, len);
-        }
-    }
-    // 打印一些特殊token
-    LOGI("  BOS token: %d", llama_vocab_bos(vocab));
-    LOGI("  EOS token: %d", llama_vocab_eos(vocab));
-    LOGI("========================================");
 
     // Create context with official parameters
     // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
@@ -696,11 +674,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     for (int i = 0; i < nPredict; i++) {
         llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
 
-        // DEBUG: 打印前10个token的ID和内容
-        if (i < 10) {
-            LOGI("🔍 DEBUG Token[%d]: id=%d (0x%08X)", i, new_token, new_token);
-        }
-
 // Check if end of generation
         if (llama_vocab_is_eog(vocab, new_token)) {
             LOGD("End of generation at token %d", i);
@@ -717,16 +690,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
                 0,
                 false
         );
-
-        // DEBUG: 打印前10个token转换结果
-        if (i < 10) {
-            if (n > 0) {
-                buf[n] = '\0';
-                LOGI("🔍 DEBUG Token[%d]: piece='%s' (len=%d, hex=%02X)", i, buf, n, (unsigned char)buf[0]);
-            } else {
-                LOGI("🔍 DEBUG Token[%d]: piece=ERROR (len=%d)", i, n);
-            }
-        }
 
         if (n > 0) {
             result.append(buf, n);
@@ -942,11 +905,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     for (int i = 0; i < nPredict; i++) {
         llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
 
-        // DEBUG: 打印前10个token的ID
-        if (i < 10) {
-            LOGI("🔍 STREAM Token[%d]: id=%d (0x%08X)", i, new_token, new_token);
-        }
-
 // Check if end of generation
         if (llama_vocab_is_eog(vocab, new_token)) {
             LOGD("End of generation at token %d", i);
@@ -963,12 +921,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
                 0,
                 false
         );
-
-        // DEBUG: 打印前10个token转换结果
-        if (i < 10 && n > 0) {
-            buf[n] = '\0';
-            LOGI("🔍 STREAM Token[%d]: piece='%s' (len=%d, hex=%02X)", i, buf, n, (unsigned char)buf[0]);
-        }
 
         if (n > 0) {
             std::string token_str(buf, n);

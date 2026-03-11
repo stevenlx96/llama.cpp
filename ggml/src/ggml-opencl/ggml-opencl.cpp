@@ -123,6 +123,14 @@ struct ggml_cl_compiler_version {
     bool newer_than_or_same(ADRENO_CL_COMPILER_TYPE t, int x, int y, int z) const {
         return same(t, x, y, z) || newer_than(t, x, y, z);
     }
+    // Returns true if the driver version was successfully parsed (major >= 0).
+    // Returns false when get_adreno_cl_compiler_version() could not recognize
+    // the driver version string (e.g. format "0800.51" which contains neither
+    // "E031" nor "DX").  Adreno-optimized kernels must not be used in this case
+    // because their correctness has not been verified for such drivers.
+    bool is_valid() const {
+        return major >= 0;
+    }
 };
 
 static size_t align_to(size_t value, size_t to_alignment) {
@@ -2509,6 +2517,10 @@ static ggml_backend_opencl_context * ggml_cl2_init(ggml_backend_dev_t dev) {
     backend_ctx->driver_version = driver_version;
 
     backend_ctx->adreno_cl_compiler_version = get_adreno_cl_compiler_version(driver_version);
+    if (!backend_ctx->adreno_cl_compiler_version.is_valid()) {
+        GGML_LOG_WARN("ggml_opencl: could not parse Adreno compiler version from driver string \"%s\"; "
+            "Adreno-optimized kernels will be disabled to avoid output corruption\n", driver_version);
+    }
     backend_ctx->has_vector_subgroup_broadcast =
         (backend_ctx->adreno_cl_compiler_version.type == E031 && backend_ctx->adreno_cl_compiler_version.major >= 47) ||
         (backend_ctx->adreno_cl_compiler_version.type == DX   && backend_ctx->adreno_cl_compiler_version.major >= 17);
@@ -3501,6 +3513,13 @@ static enum ggml_status ggml_backend_opencl_buffer_init_tensor(ggml_backend_buff
 // The optimized gemm and gemv kernels are used for large matrices without batch.
 // tensor is the quantized weights matrix.
 inline bool use_adreno_kernels(const ggml_backend_opencl_context *backend_ctx, const ggml_tensor *tensor) {
+    // If the driver version string was not recognised (e.g. "0800.51" which
+    // contains neither "E031" nor "DX"), fall back to the generic OpenCL
+    // kernels.  Running the Adreno-specific kernels on an unverified driver
+    // produces corrupted output (e.g. all "@" characters).
+    if (!backend_ctx->adreno_cl_compiler_version.is_valid()) {
+        return false;
+    }
     int64_t threshold_ne0 = 512;
     int64_t threshold_ne1 = 512;
     if (!backend_ctx->adreno_cl_compiler_version.newer_than_or_same(E031, 38, 11, 0) &&
@@ -7326,7 +7345,11 @@ static void ggml_cl_mul_mat(ggml_backend_t backend, const ggml_tensor * src0, co
     cl_context context = backend_ctx->context;
 
     if(src0t == GGML_TYPE_F16 && src1t == GGML_TYPE_F32){
-        if (ne01 >= 64 && ne1 >= 32 && ne00 >= 16 && (ne12 % ne02) == 0) {
+        // Only use the Adreno KQ/KQV path when the driver version is recognised.
+        // An unrecognised version string (e.g. "0800.51") means is_valid() is
+        // false; running these kernels in that case causes output corruption.
+        if (backend_ctx->adreno_cl_compiler_version.is_valid() &&
+            ne01 >= 64 && ne1 >= 32 && ne00 >= 16 && (ne12 % ne02) == 0) {
             // For KQ
             if (ggml_is_permuted(src0) && ggml_is_permuted(src1) &&
                 nb00 <= nb02 &&

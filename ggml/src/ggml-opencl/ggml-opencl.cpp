@@ -3150,6 +3150,20 @@ static bool ggml_opencl_supports_op(ggml_backend_dev_t dev, const struct ggml_te
         case GGML_OP_GROUP_NORM:
             return ggml_is_contiguous(op->src[0]);
         case GGML_OP_MUL_MAT:
+            // The flat Q4_0 / Q8_0 / Q6_K / MXFP4 GEMM/GEMV kernels compiled for
+            // Adreno use cl_qcom_reqd_sub_group_size and sub_group_reduce_add.  If
+            // the Adreno driver version string is not recognised (e.g. "0800.51"),
+            // is_valid() returns false and those kernels may produce corrupted
+            // results.  Fall back to CPU in that case so the output is correct,
+            // at the cost of performance for weight projections.
+            if (backend_ctx->gpu_family == ADRENO &&
+                    !backend_ctx->adreno_cl_compiler_version.is_valid()) {
+                const ggml_type src0_type = op->src[0]->type;
+                if (src0_type == GGML_TYPE_Q4_0 || src0_type == GGML_TYPE_Q8_0 ||
+                        src0_type == GGML_TYPE_Q6_K || src0_type == GGML_TYPE_MXFP4) {
+                    return false;
+                }
+            }
             if (op->src[0]->type == GGML_TYPE_F16) {
                 return true;
             } else if (op->src[0]->type == GGML_TYPE_F32) {

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GgufChat" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- 可选：自定义颜色 -->
+        <item name="colorPrimary">@android:color/holo_blue_bright</item>
+        <item name="colorPrimaryDark">@android:color/holo_blue_dark</item>
+    </style>
+</resources>

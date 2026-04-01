@@ -102,9 +102,6 @@ dependencies {
     // RecyclerView
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
-    // ONNX Runtime for intent recognition
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.3")
-
     // Test dependencies
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

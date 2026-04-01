@@ -6,24 +6,32 @@ import java.io.File
 
 /**
  * Diagnostic tool for intent recognition feature
+ *
+ * Usage in MainActivity or Application:
+ * ```
+ * IntentDiagnostic.checkStatus(this)
+ * ```
  */
 object IntentDiagnostic {
     private const val TAG = "IntentDiagnostic"
 
+    /**
+     * Check and log complete status of intent recognition feature
+     */
     fun checkStatus(context: Context) {
         Log.i(TAG, "========================================")
         Log.i(TAG, "Intent Recognition Diagnostic")
         Log.i(TAG, "========================================")
 
-        // 1. Check if ONNX Runtime Java API is available
+        // 1. Check if ONNX Runtime was compiled in
         val isRuntimeAvailable = checkRuntimeAvailable()
-        Log.i(TAG, "1. ONNX Runtime (Java API): ${if (isRuntimeAvailable) "YES" else "NO"}")
+        Log.i(TAG, "1. ONNX Runtime compiled: ${if (isRuntimeAvailable) "✅ YES" else "❌ NO"}")
 
         // 2. Check model directory
         val modelDir = IntentModelManager.getModelDir(context)
         val modelDirFile = File(modelDir)
         Log.i(TAG, "2. Model directory: $modelDir")
-        Log.i(TAG, "   Directory exists: ${if (modelDirFile.exists()) "YES" else "NO"}")
+        Log.i(TAG, "   Directory exists: ${if (modelDirFile.exists()) "✅ YES" else "❌ NO"}")
 
         // 3. Check model files
         val modelInfo = IntentModelManager.getModelInfo(context)
@@ -40,20 +48,21 @@ object IntentDiagnostic {
         requiredFiles.forEach { filename ->
             val size = modelInfo[filename]
             if (size != null) {
-                Log.i(TAG, "   OK $filename (${formatBytes(size)})")
+                Log.i(TAG, "   ✅ $filename (${formatBytes(size)})")
             } else {
-                Log.w(TAG, "   MISSING $filename")
+                Log.w(TAG, "   ❌ $filename (MISSING)")
             }
         }
 
         // 4. Overall status
         val isReady = isRuntimeAvailable && IntentModelManager.isModelInstalled(context)
         Log.i(TAG, "========================================")
-        Log.i(TAG, "Status: ${if (isReady) "READY" else "NOT READY"}")
+        Log.i(TAG, "Status: ${if (isReady) "✅ READY" else "❌ NOT READY"}")
 
         if (!isRuntimeAvailable) {
-            Log.w(TAG, "Action: ONNX Runtime not available")
-            Log.w(TAG, "  - Check build.gradle: implementation 'com.microsoft.onnxruntime:onnxruntime-android:...'")
+            Log.w(TAG, "Action: ONNX Runtime not compiled in build")
+            Log.w(TAG, "  - Check CMake log for 'ONNX Runtime found'")
+            Log.w(TAG, "  - Ensure libonnxruntime.so is in jniLibs/arm64-v8a/")
         }
 
         if (!IntentModelManager.isModelInstalled(context)) {
@@ -65,15 +74,22 @@ object IntentDiagnostic {
         Log.i(TAG, "========================================")
     }
 
+    /**
+     * Check if ONNX Runtime is available by trying to create IntentRecognizer
+     */
     private fun checkRuntimeAvailable(): Boolean {
         return try {
-            Class.forName("ai.onnxruntime.OrtEnvironment")
+            // Try to load the library
+            System.loadLibrary("llama-android")
             true
-        } catch (e: ClassNotFoundException) {
+        } catch (e: UnsatisfiedLinkError) {
             false
         }
     }
 
+    /**
+     * Format bytes to human-readable size
+     */
     private fun formatBytes(bytes: Long): String {
         return when {
             bytes < 1024 -> "$bytes B"
@@ -82,6 +98,9 @@ object IntentDiagnostic {
         }
     }
 
+    /**
+     * Test intent recognition with a sample text
+     */
     fun testPredict(context: Context, testText: String = "今天北京天气怎么样"): Boolean {
         Log.i(TAG, "========================================")
         Log.i(TAG, "Testing Intent Recognition")
@@ -92,7 +111,7 @@ object IntentDiagnostic {
         val modelDir = IntentModelManager.getModelDir(context)
 
         val initialized = recognizer.initialize(modelDir)
-        Log.i(TAG, "Initialize: ${if (initialized) "SUCCESS" else "FAILED"}")
+        Log.i(TAG, "Initialize: ${if (initialized) "✅ SUCCESS" else "❌ FAILED"}")
 
         if (!initialized) {
             Log.e(TAG, "Cannot test - initialization failed")
@@ -112,6 +131,7 @@ object IntentDiagnostic {
             recognizer.release()
             Log.i(TAG, "========================================")
             return true
+
         } catch (e: Exception) {
             Log.e(TAG, "Test failed", e)
             recognizer.release()

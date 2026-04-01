@@ -89,6 +89,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 
+    // ONNX Runtime for intent recognition
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.3")
+
     // Test dependencies
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

@@ -45,6 +45,17 @@ if [ -f "$SRC_LIB/libomp.so" ]; then
     echo "Copied libomp.so (OpenMP)"
 fi
 
+# Optional: Copy ONNX Runtime library if exists (for intent recognition)
+if [ -f "$SRC_LIB/libonnxruntime.so" ]; then
+    cp -v "$SRC_LIB/libonnxruntime.so" "$APP_LIB/"
+    cp -v "$SRC_LIB/libonnxruntime.so" "$AAR_LIB/"
+    echo "Copied libonnxruntime.so (Intent Recognition)"
+else
+    echo "NOTE: libonnxruntime.so not found - intent recognition will be disabled"
+    echo "  To enable, download ONNX Runtime Android (v1.17.0) and place libonnxruntime.so in:"
+    echo "    $SRC_LIB/"
+fi
+
 echo "========================================="
 echo "All libraries copied successfully!"
 echo "========================================="

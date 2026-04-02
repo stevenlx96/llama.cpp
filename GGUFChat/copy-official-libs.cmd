@@ -41,6 +41,17 @@ if exist "%SRC_LIB%\libomp.so" (
     copy /Y "%SRC_LIB%\libomp.so" "%AAR_LIB%\"
 )
 
+REM Optional: Copy ONNX Runtime library if exists (for intent recognition)
+if exist "%SRC_LIB%\libonnxruntime.so" (
+    echo Copying libonnxruntime.so (Intent Recognition)...
+    copy /Y "%SRC_LIB%\libonnxruntime.so" "%APP_LIB%\" || goto :error
+    copy /Y "%SRC_LIB%\libonnxruntime.so" "%AAR_LIB%\" || goto :error
+) else (
+    echo NOTE: libonnxruntime.so not found - intent recognition will be disabled
+    echo   To enable, download ONNX Runtime Android v1.17.0 and place libonnxruntime.so in:
+    echo     %SRC_LIB%\
+)
+
 echo.
 echo =========================================
 echo All libraries copied successfully!

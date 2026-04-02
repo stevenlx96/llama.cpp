@@ -4,8 +4,6 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.InputStream
-import java.io.OutputStream
 import java.net.URL
 
 /**
@@ -128,8 +126,8 @@ class ModelDownloader {
         outputFile: File,
         listener: DownloadProgressListener?
     ) = withContext(Dispatchers.IO) {
-        var inputStream: InputStream? = null
-        var outputStream: OutputStream? = null
+        var inputStream: java.io.InputStream? = null
+        var outputStream: java.io.OutputStream? = null
 
         try {
             val url = URL(urlString)

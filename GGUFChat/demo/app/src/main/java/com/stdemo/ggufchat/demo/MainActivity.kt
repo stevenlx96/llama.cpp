@@ -4,6 +4,7 @@ import android.os.Build
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -13,29 +14,45 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.stdemo.ggufchat.GGUFChatEngine  // 来自AAR包
+import com.stdemo.ggufchat.IntentConfig  // 来自AAR包
+import com.stdemo.ggufchat.IntentDiagnostic  // 来自AAR包
+import com.stdemo.ggufchat.IntentRecognizerManager  // 来自AAR包
 import com.stdemo.ggufchat.Message  // 来自AAR包
+import com.stdemo.ggufchat.ModelConfig  // 来自AAR包
 import com.stdemo.ggufchat.ModelDownloader  // 来自AAR包
 import com.stdemo.ggufchat.ModelManager  // 来自AAR包
+import com.stdemo.ggufchat.ModelRegistry  // 来自AAR包
+import com.stdemo.ggufchat.PersistentStorageHelper  // 来自AAR包
 import com.stdemo.ggufchat.demo.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 
 /**
- * Demo MainActivity - 展示如何使用AAR包中的GGUFChatEngine
+ * Demo MainActivity - 展示如何使用AAR包中的所有功能
  *
  * 所有核心功能都来自llama-android.aar：
- * - GGUFChatEngine: 聊天引擎
+ * - GGUFChatEngine: 聊天引擎（流式/非流式输出）
  * - Message: 消息数据类
- * - ModelDownloader: 模型下载器
+ * - ModelDownloader: 模型下载器（ModelScope）
  * - ModelManager: 模型扫描器
- * - ChatConfig: 配置类
+ * - ModelConfig: 模型配置持久化（SharedPreferences）
+ * - ModelRegistry: 预设模型列表
+ * - IntentRecognizerManager: 意图识别管理器
+ * - IntentConfig: 意图识别配置
+ * - IntentDiagnostic: 意图识别诊断工具
+ * - PersistentStorageHelper: 持久化存储助手
  */
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "DemoMainActivity"
+    }
 
     private lateinit var binding: ActivityMainBinding
     private val engine = GGUFChatEngine()  // 来自AAR包
     private val messageAdapter = MessageAdapter()
     private val downloader = ModelDownloader()  // 来自AAR包
     private lateinit var modelManager: ModelManager
+    private lateinit var modelConfig: ModelConfig
     private val messages = mutableListOf<Message>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,17 +62,32 @@ class MainActivity : AppCompatActivity() {
 
         val modelsDir = getExternalFilesDir("models")?.absolutePath ?: return
         modelManager = ModelManager(modelsDir)
+        modelConfig = ModelConfig(this)
 
         setupRecyclerView()
         setupClickListeners()
         updateStreamingStatus()
         requestStoragePermission()
+        initIntentRecognition()
     }
 
     private fun setupRecyclerView() {
         binding.recyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
             adapter = messageAdapter
+        }
+    }
+
+    /**
+     * 初始化意图识别（可选功能）
+     */
+    private fun initIntentRecognition() {
+        val initialized = IntentRecognizerManager.initialize(this)
+        if (initialized) {
+            Log.i(TAG, "Intent recognition initialized successfully")
+            addMessage(Message("[Intent recognition: READY]", isUser = false))
+        } else {
+            Log.i(TAG, "Intent recognition not available (ONNX Runtime or models not present)")
         }
     }
 
@@ -81,6 +113,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.streamingToggleButton.setOnClickListener {
             engine.setStreamingMode(!engine.isStreamingModeEnabled())
+            modelConfig.saveStreamingMode(engine.isStreamingModeEnabled())
             updateStreamingStatus()
         }
 
@@ -92,8 +125,28 @@ class MainActivity : AppCompatActivity() {
         binding.settingsButton?.setOnClickListener {
             showSettingsDialog()
         }
+
+        // Feature test buttons
+        binding.intentTestButton.setOnClickListener {
+            testIntentRecognition()
+        }
+
+        binding.diagnosticButton.setOnClickListener {
+            runDiagnostics()
+        }
+
+        binding.storageInfoButton.setOnClickListener {
+            showStorageInfo()
+        }
+
+        binding.modelRegistryButton.setOnClickListener {
+            showModelRegistry()
+        }
     }
 
+    /**
+     * 发送消息 - 支持意图识别 + LLM 回退
+     */
     private fun sendMessage(text: String) {
         if (!engine.isModelLoaded()) {
             Toast.makeText(this, "Please load a model first", Toast.LENGTH_SHORT).show()
@@ -105,40 +158,206 @@ class MainActivity : AppCompatActivity() {
         binding.stopButton.isEnabled = true
 
         lifecycleScope.launch {
-            val assistantMessage = Message("", isUser = false)
-            addMessage(assistantMessage)
-            val assistantIndex = messages.lastIndex
-
-            val result = engine.generate(
-                userInput = text,
-                onTokenGenerated = { token ->
+            // 尝试意图识别
+            val intentResult = IntentRecognizerManager.predict(text)
+            if (intentResult != null && intentResult.hit) {
+                if (IntentConfig.shouldFallbackToLLM(intentResult.intent)) {
+                    Log.i(TAG, "Intent HIT: ${intentResult.intent} - fallback to LLM")
+                    generateWithLLM(text)
+                } else {
+                    Log.i(TAG, "Intent HIT: ${intentResult.intent} (${(intentResult.confidence * 100).toInt()}%)")
+                    val response = buildString {
+                        appendLine("Intent: ${intentResult.intent}")
+                        appendLine("Confidence: ${(intentResult.confidence * 100).toInt()}%")
+                        if (intentResult.slots.isNotEmpty()) {
+                            appendLine("Slots:")
+                            intentResult.slots.forEach { slot ->
+                                appendLine("  ${slot.slotType}: ${slot.slotValue}")
+                            }
+                        }
+                    }
+                    addMessage(Message(response, isUser = false))
                     runOnUiThread {
-                        messages[assistantIndex] = messages[assistantIndex].copy(
-                            content = messages[assistantIndex].content + token
-                        )
-                        updateMessages()
+                        binding.sendButton.isEnabled = true
+                        binding.stopButton.isEnabled = false
                     }
                 }
-            )
+            } else {
+                generateWithLLM(text)
+            }
+        }
+    }
 
-            runOnUiThread {
-                if (result.isSuccess) {
-                    val response = result.getOrNull() ?: ""
-                    if (messages[assistantIndex].content.isEmpty()) {
-                        messages[assistantIndex] = Message(response, isUser = false)
-                        updateMessages()
-                    }
-                } else {
-                    messages[assistantIndex] = Message(
-                        "Error: ${result.exceptionOrNull()?.message}",
-                        isUser = false
+    /**
+     * 使用 LLM 生成回复（流式/非流式）
+     */
+    private suspend fun generateWithLLM(text: String) {
+        val assistantMessage = Message("", isUser = false)
+        addMessage(assistantMessage)
+        val assistantIndex = messages.lastIndex
+
+        val result = engine.generate(
+            userInput = text,
+            onTokenGenerated = { token ->
+                runOnUiThread {
+                    messages[assistantIndex] = messages[assistantIndex].copy(
+                        content = messages[assistantIndex].content + token
                     )
                     updateMessages()
                 }
-                binding.sendButton.isEnabled = true
-                binding.stopButton.isEnabled = false
+            }
+        )
+
+        runOnUiThread {
+            if (result.isSuccess) {
+                val response = result.getOrNull() ?: ""
+                if (messages[assistantIndex].content.isEmpty()) {
+                    messages[assistantIndex] = Message(response, isUser = false)
+                    updateMessages()
+                }
+            } else {
+                messages[assistantIndex] = Message(
+                    "Error: ${result.exceptionOrNull()?.message}",
+                    isUser = false
+                )
+                updateMessages()
+            }
+            binding.sendButton.isEnabled = true
+            binding.stopButton.isEnabled = false
+        }
+    }
+
+    /**
+     * 测试意图识别功能
+     */
+    private fun testIntentRecognition() {
+        val info = buildString {
+            appendLine("=== Intent Recognition Test ===")
+            appendLine("Initialized: ${IntentRecognizerManager.isReady()}")
+            appendLine("Threshold: ${IntentRecognizerManager.getThreshold()}")
+            appendLine("Default threshold: ${IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD}")
+            appendLine("Fallback intents: ${IntentConfig.FALLBACK_TO_LLM_INTENTS}")
+            appendLine()
+
+            if (IntentRecognizerManager.isReady()) {
+                val testTexts = listOf(
+                    "今天北京天气怎么样",
+                    "播放周杰伦的歌",
+                    "你好啊"
+                )
+                testTexts.forEach { text ->
+                    val result = IntentRecognizerManager.predict(text)
+                    if (result != null) {
+                        appendLine("\"$text\"")
+                        appendLine("  -> ${result.intent} (${(result.confidence * 100).toInt()}%) hit=${result.hit}")
+                    } else {
+                        appendLine("\"$text\" -> null")
+                    }
+                }
+            } else {
+                appendLine("Intent recognition not available.")
+                appendLine("(ONNX Runtime or model files not present)")
             }
         }
+        addMessage(Message(info, isUser = false))
+
+        // Also run IntentDiagnostic (output goes to logcat)
+        IntentDiagnostic.checkStatus(this)
+    }
+
+    /**
+     * 运行诊断
+     */
+    private fun runDiagnostics() {
+        val info = buildString {
+            appendLine("=== AAR Feature Diagnostics ===")
+            appendLine()
+
+            // Engine status
+            appendLine("[GGUFChatEngine]")
+            appendLine("  Model loaded: ${engine.isModelLoaded()}")
+            appendLine("  Streaming: ${engine.isStreamingModeEnabled()}")
+            appendLine("  History size: ${engine.getHistorySize()}")
+            if (engine.isModelLoaded()) {
+                appendLine("  Model info: ${engine.getModelInfo()}")
+            }
+            val config = engine.getConfig()
+            appendLine("  Temperature: ${config.temperature}")
+            appendLine("  TopP: ${config.topP}")
+            appendLine("  TopK: ${config.topK}")
+            appendLine("  Max tokens: ${config.maxTokens}")
+            appendLine()
+
+            // ModelConfig (SharedPreferences)
+            appendLine("[ModelConfig]")
+            appendLine("  Saved model path: ${modelConfig.getModelPath() ?: "none"}")
+            appendLine("  Saved streaming mode: ${modelConfig.isStreamingModeEnabled()}")
+            appendLine("  Saved model dir: ${modelConfig.getModelDirectory() ?: "none"}")
+            appendLine()
+
+            // ModelManager
+            appendLine("[ModelManager]")
+            val models = modelManager.scanModels()
+            appendLine("  Found ${models.size} model(s):")
+            models.forEach { model ->
+                appendLine("    - ${model.name} (${model.sizeMB}MB) valid=${model.isValid}")
+            }
+            appendLine()
+
+            // Intent recognition
+            appendLine("[IntentRecognition]")
+            appendLine("  Ready: ${IntentRecognizerManager.isReady()}")
+            appendLine("  Threshold: ${IntentRecognizerManager.getThreshold()}")
+            appendLine()
+
+            // Storage
+            appendLine("[Storage]")
+            appendLine("  Public available: ${PersistentStorageHelper.isPublicStorageAvailable()}")
+            val recommended = PersistentStorageHelper.getRecommendedModelsDir(this@MainActivity)
+            appendLine("  Recommended dir: ${recommended.absolutePath}")
+        }
+        addMessage(Message(info, isUser = false))
+
+        // Also run IntentDiagnostic to logcat
+        IntentDiagnostic.checkStatus(this)
+    }
+
+    /**
+     * 显示存储信息
+     */
+    private fun showStorageInfo() {
+        val info = PersistentStorageHelper.getStorageInfo(this)
+        addMessage(Message(info, isUser = false))
+    }
+
+    /**
+     * 显示预设模型列表
+     */
+    private fun showModelRegistry() {
+        val info = buildString {
+            appendLine("=== Model Registry ===")
+            ModelRegistry.availableModels.forEach { model ->
+                appendLine()
+                appendLine("Name: ${model.name}")
+                appendLine("  ID: ${model.modelId}")
+                appendLine("  File: ${model.fileName}")
+                appendLine("  Desc: ${model.description}")
+                appendLine("  Size: ~${model.size / (1024 * 1024)}MB")
+            }
+        }
+
+        // Show as dialog with download option
+        val items = ModelRegistry.availableModels.map { "${it.name} (~${it.size / (1024 * 1024)}MB)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Model Registry (from AAR)")
+            .setItems(items) { _, which ->
+                val model = ModelRegistry.availableModels[which]
+                downloadModel(model.modelId, model.fileName)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+
+        addMessage(Message(info, isUser = false))
     }
 
     private fun addMessage(message: Message) {
@@ -161,13 +380,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ (API 33+)
-            // 注意：getExternalFilesDir() 不需要权限，但为了兼容性还是请求
             if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED) {
-                // 权限已授予，直接加载
                 tryLoadModel()
             } else {
-                // 请求Android 13+的新权限
                 requestPermissions(arrayOf(
                     Manifest.permission.READ_MEDIA_IMAGES,
                     Manifest.permission.READ_MEDIA_VIDEO,
@@ -175,7 +390,6 @@ class MainActivity : AppCompatActivity() {
                 ), 1)
             }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            // Android 6-12
             if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(
                     Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -185,7 +399,6 @@ class MainActivity : AppCompatActivity() {
                 tryLoadModel()
             }
         } else {
-            // Android 5及以下
             tryLoadModel()
         }
     }
@@ -198,6 +411,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun tryLoadModel() {
+        // Try loading saved model path from ModelConfig first
+        val savedPath = modelConfig.getModelPath()
+        if (savedPath != null && java.io.File(savedPath).exists()) {
+            Log.i(TAG, "Loading saved model path from ModelConfig: $savedPath")
+            loadModel(savedPath)
+            return
+        }
+
         binding.statusText.text = "Scanning for models..."
         val availableModels = modelManager.scanModels().filter { it.isValid }
 
@@ -222,6 +443,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (result.isSuccess) {
                     binding.statusText.text = "Model ready"
+                    modelConfig.saveModelPath(modelPath)
                     addMessage(Message("你好，请问有什么可以帮助你的吗？", isUser = false))
                     updateStreamingStatus()
                 } else {
@@ -234,8 +456,9 @@ class MainActivity : AppCompatActivity() {
     private fun showNoModelDialog() {
         AlertDialog.Builder(this)
             .setTitle("No Models Found")
-            .setMessage("Click 'Download Model' to download one from ModelScope.")
+            .setMessage("Click 'Download Model' to download one from ModelScope, or choose from the Model Registry.")
             .setPositiveButton("Download Model") { _, _ -> showModelInputDialog() }
+            .setNeutralButton("Model Registry") { _, _ -> showModelRegistry() }
             .setNegativeButton("Cancel", null)
             .show()
     }
@@ -359,12 +582,29 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(tokensInput)
 
+        layout.addView(TextView(this).apply {
+            text = "Intent Threshold: ${IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD}"
+            textSize = 14f
+            setPadding(0, 20, 0, 0)
+        })
+        val thresholdInput = EditText(this).apply {
+            setText(IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD.toString())
+            inputType = android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        layout.addView(thresholdInput)
+
         AlertDialog.Builder(this)
             .setTitle("Settings")
             .setView(layout)
             .setPositiveButton("Save") { _, _ ->
                 tempInput.text.toString().toFloatOrNull()?.let { engine.setTemperature(it) }
                 tokensInput.text.toString().toIntOrNull()?.let { engine.setMaxTokens(it) }
+                thresholdInput.text.toString().toFloatOrNull()?.let { threshold ->
+                    if (threshold in 0f..1f) {
+                        IntentConfig.DEFAULT_CONFIDENCE_THRESHOLD = threshold
+                        IntentRecognizerManager.setThreshold(threshold)
+                    }
+                }
                 Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
@@ -374,5 +614,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         engine.release()
+        IntentRecognizerManager.release()
     }
 }

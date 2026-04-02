@@ -13,4 +13,7 @@
     <!-- For accessing all files -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- Network (for model download) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
 </manifest>

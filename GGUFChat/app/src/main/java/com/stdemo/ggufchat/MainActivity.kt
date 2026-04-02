@@ -49,9 +49,6 @@ class MainActivity : AppCompatActivity() {
         setupClickListeners()
         updateStreamingModeStatus()
         requestStoragePermission()
-
-        // 初始化意图识别管理器
-        initializeIntentRecognition()
     }
 
     private fun setupRecyclerView() {
@@ -555,23 +552,4 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 初始化意图识别功能
-     */
-    private fun initializeIntentRecognition() {
-        // 诊断检查
-        IntentDiagnostic.checkStatus(this)
-
-        // 初始化意图识别管理器
-        val initialized = IntentRecognizerManager.initialize(this)
-
-        if (initialized) {
-            android.util.Log.i("MainActivity", "✅ Intent recognition enabled for chat")
-
-            // 测试一下
-            IntentDiagnostic.testPredict(this, "今天北京天气怎么样")
-        } else {
-            android.util.Log.w("MainActivity", "⚠️ Intent recognition disabled - models not available")
-        }
-    }
 }

@@ -21,6 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "GGUFChat"
 include(":app")
-include(":llama-android")
 
  

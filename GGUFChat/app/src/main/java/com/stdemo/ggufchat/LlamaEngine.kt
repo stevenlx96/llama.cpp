@@ -56,23 +56,42 @@ class GGUFChatEngine {
     private val promptBuilder = ChatPromptBuilder()
     private var config = ChatConfig()
 
+    // Whether native library loaded successfully
+    private var nativeLoaded = false
+
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
+            // Try to pre-load ONNX Runtime (optional dependency)
+            // If libllama-android.so was built with ONNX support, it needs libonnxruntime.so
+            try {
+                System.loadLibrary("onnxruntime")
+                Log.d(TAG, "Loaded onnxruntime (intent recognition available)")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.i(TAG, "onnxruntime not available (intent recognition disabled)")
+            }
+
             System.loadLibrary("llama-android")
+            nativeLoaded = true
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
 
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "FATAL: Failed to load llama-android JNI wrapper", e)
-            throw RuntimeException("Cannot load JNI wrapper library", e)
+            Log.e(TAG, "Failed to load llama-android JNI wrapper", e)
+            nativeLoaded = false
         } catch (e: Exception) {
-            Log.e(TAG, "FATAL: Failed to initialize native libraries", e)
-            throw RuntimeException("Native library initialization failed", e)
+            Log.e(TAG, "Failed to initialize native libraries", e)
+            nativeLoaded = false
         }
     }
 
+    fun isNativeLoaded(): Boolean = nativeLoaded
+
     suspend fun loadModel(path: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            if (!nativeLoaded) {
+                return@withContext Result.failure(Exception("Native library not loaded. Check logcat for details."))
+            }
+
             val file = java.io.File(path)
             if (!file.exists()) {
                 return@withContext Result.failure(Exception("Model file not found: $path"))
@@ -267,7 +286,7 @@ class GGUFChatEngine {
                 Thread.sleep(100)
             }
 
-            if (contextPtr != 0L) {
+            if (nativeLoaded && contextPtr != 0L) {
                 nativeFree(contextPtr)
                 Log.d(TAG, "Model freed")
             }

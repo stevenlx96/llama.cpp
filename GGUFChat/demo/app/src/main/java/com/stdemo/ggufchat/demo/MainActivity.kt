@@ -67,8 +67,16 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerView()
         setupClickListeners()
         updateStreamingStatus()
-        requestStoragePermission()
-        initIntentRecognition()
+
+        if (!engine.isNativeLoaded()) {
+            binding.statusText.text = "Native library failed to load. Check logcat."
+            addMessage(Message("[ERROR] Native library failed to load.\n" +
+                "If the AAR was built with ONNX support, libonnxruntime.so must be included.\n" +
+                "Rebuild the AAR without libonnxruntime.so in jniLibs, or add libonnxruntime.so to the demo.", isUser = false))
+        } else {
+            requestStoragePermission()
+            initIntentRecognition()
+        }
     }
 
     private fun setupRecyclerView() {

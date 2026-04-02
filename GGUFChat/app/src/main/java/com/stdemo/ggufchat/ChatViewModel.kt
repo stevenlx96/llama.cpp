@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
  */
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val llamaEngine = GGUFChatEngine(application.applicationContext)
+    private val llamaEngine = GGUFChatEngine()
 
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()

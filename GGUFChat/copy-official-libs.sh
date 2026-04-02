@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copy llama.cpp libraries to GGUFChat project (with optional NPU/GPU acceleration)
+# Copy llama.cpp libraries to GGUFChat project (CPU only)
 
 set -e
 
@@ -11,7 +11,6 @@ DEST_LIB="app/src/main/jniLibs/arm64-v8a"
 
 echo "========================================="
 echo "Copying llama.cpp Libraries"
-echo "(with NPU/GPU acceleration support)"
 echo "========================================="
 
 # Create destination directory
@@ -42,26 +41,6 @@ if [ -f "$SRC_LIB/libomp.so" ]; then
     echo "Copied libomp.so (OpenMP)"
 fi
 
-# Optional: Copy OpenCL backend (GPU acceleration)
-if [ -f "$SRC_LIB/libggml-opencl.so" ]; then
-    cp -v "$SRC_LIB/libggml-opencl.so" "$DEST_LIB/"
-    echo "Copied libggml-opencl.so (GPU acceleration)"
-fi
-
-# Optional: Copy Hexagon backend (NPU acceleration)
-if [ -f "$SRC_LIB/libggml-hexagon.so" ]; then
-    cp -v "$SRC_LIB/libggml-hexagon.so" "$DEST_LIB/"
-    echo "Copied libggml-hexagon.so (NPU acceleration)"
-fi
-
-# Optional: Copy Hexagon HTP libraries
-for htp_lib in "$SRC_LIB"/libggml-htp*.so; do
-    if [ -f "$htp_lib" ]; then
-        cp -v "$htp_lib" "$DEST_LIB/"
-        echo "Copied $(basename $htp_lib) (Hexagon HTP)"
-    fi
-done
-
 echo "========================================="
 echo "All libraries copied successfully!"
 echo "========================================="
@@ -70,8 +49,5 @@ echo "Copied to: $DEST_LIB"
 echo ""
 echo "Libraries:"
 ls -lh "$DEST_LIB"/*.so
-echo ""
-echo "Note: Backends (CPU, OpenCL, Hexagon) are loaded"
-echo "      dynamically at runtime via ggml_backend_load_all_from_path()"
 echo ""
 echo "Next step: ./gradlew assembleDebug"

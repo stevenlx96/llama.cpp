@@ -1,271 +1,12 @@
 #include <jni.h>
 #include <string>
 #include <vector>
-#include <chrono>
 #include <android/log.h>
-#include <EGL/egl.h>  // For EGL context initialization (required for OpenCL on Android)
 #include "llama.h"
-#include "ggml-backend.h"
-#include <stdlib.h>
 
 #define TAG "LlamaJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
-
-// Custom log callback to redirect ggml logs to Android logcat
-void ggml_log_callback_android(enum ggml_log_level level, const char * text, void * user_data) {
-    (void) user_data;
-
-    size_t len = strlen(text);
-
-    // ============================================================
-    // FILTER: Skip verbose/repetitive messages (reduce log spam)
-    // ============================================================
-
-    // FILTER 1: Skip repetitive KV cache layer messages
-    if (strstr(text, "llama_kv_cache: layer") != nullptr &&
-        strstr(text, "dev =") != nullptr) {
-        return;
-    }
-
-    // FILTER 3: Skip verbose repack progress messages
-    if (strstr(text, "repack:") != nullptr ||
-        strstr(text, "repack tensor") != nullptr ||
-        strstr(text, "create_tensor:") != nullptr) {
-        return;  // Skip repack progress spam
-    }
-
-    // FILTER 4: Skip individual control token debug messages (keep summary only)
-    if (strstr(text, "control token:") != nullptr &&
-        strstr(text, "is not marked as EOG") != nullptr) {
-        return;  // Skip individual control token warnings
-    }
-
-    // FILTER 5: Skip detailed model loader key-value pairs (too verbose)
-    if (strstr(text, "llama_model_loader: - kv") != nullptr ||
-        strstr(text, "llama_model_loader: - type") != nullptr) {
-        return;  // Skip individual KV pair dumps
-    }
-
-    // FILTER 6: Skip graph reserve debug messages
-    if (strstr(text, "graph_reserve:") != nullptr) {
-        return;  // Skip graph reservation details
-    }
-
-    // FILTER 7: Skip detailed print_info lines (keep summary only)
-    if (strstr(text, "print_info:") != nullptr &&
-        (strstr(text, "n_embd") != nullptr ||
-         strstr(text, "n_head") != nullptr ||
-         strstr(text, "n_expert") != nullptr ||
-         strstr(text, "rope") != nullptr ||
-         strstr(text, "f_norm") != nullptr ||
-         strstr(text, "f_clamp") != nullptr ||
-         strstr(text, "f_max_alibi") != nullptr ||
-         strstr(text, "f_logit") != nullptr ||
-         strstr(text, "f_attn") != nullptr ||
-         strstr(text, "n_rot") != nullptr ||
-         strstr(text, "n_swa") != nullptr ||
-         strstr(text, "is_swa") != nullptr ||
-         strstr(text, "n_gqa") != nullptr ||
-         strstr(text, "causal attn") != nullptr ||
-         strstr(text, "pooling type") != nullptr ||
-         strstr(text, "rope type") != nullptr ||
-         strstr(text, "freq_") != nullptr ||
-         strstr(text, "n_ctx_orig") != nullptr)) {
-        return;  // Skip verbose architecture details
-    }
-
-    // FILTER 8: Skip token-related verbose info
-    if (strstr(text, "EOG token        =") != nullptr ||
-        strstr(text, "FIM") != nullptr ||
-        strstr(text, "token to piece cache") != nullptr) {
-        return;  // Skip token detail spam
-    }
-
-    // FILTER 9: Skip backend enumeration spam
-    if (strstr(text, "llama_context: enumerating backends") != nullptr ||
-        strstr(text, "llama_context: backend_ptrs.size()") != nullptr ||
-        strstr(text, "llama_context: max_nodes") != nullptr ||
-        strstr(text, "llama_context: reserving") != nullptr ||
-        strstr(text, "llama_context: worst-case") != nullptr) {
-        return;  // Skip backend enumeration details
-    }
-
-    // FILTER 10: Skip async upload messages
-    if (strstr(text, "load_all_data:") != nullptr) {
-        return;  // Skip async upload details
-    }
-
-    // FILTER 11: Skip progress dots
-    if (len == 2 && text[0] == '.' && text[1] == '\n') {
-        return;  // Skip progress dots
-    }
-    if (len == 1 && text[0] == '.') {
-        return;  // Skip progress dots
-    }
-
-    // ============================================================
-    // ALLOW THROUGH: Critical diagnostic information
-    // ============================================================
-
-    // Map ggml log levels to Android log priorities
-    int android_priority;
-    switch (level) {
-        case GGML_LOG_LEVEL_ERROR:
-            android_priority = ANDROID_LOG_ERROR;
-            break;
-        case GGML_LOG_LEVEL_WARN:
-            android_priority = ANDROID_LOG_WARN;
-            break;
-        case GGML_LOG_LEVEL_INFO:
-            android_priority = ANDROID_LOG_INFO;
-            break;
-        case GGML_LOG_LEVEL_DEBUG:
-            android_priority = ANDROID_LOG_DEBUG;
-            break;
-        default:
-            android_priority = ANDROID_LOG_VERBOSE;
-            break;
-    }
-
-    // Remove trailing newline if present (logcat adds its own)
-    if (len > 0 && text[len - 1] == '\n') {
-        char * text_copy = strdup(text);
-        text_copy[len - 1] = '\0';
-        __android_log_write(android_priority, "llama.cpp", text_copy);
-        free(text_copy);
-    } else {
-        __android_log_write(android_priority, "llama.cpp", text);
-    }
-}
-
-// ============================================================
-// EGL Context Initialization - Required for OpenCL on Android
-// ============================================================
-
-// Many Android devices (especially Qualcomm) require an EGL context
-// to be initialized before OpenCL can be used. This is a Qualcomm-specific
-// requirement where OpenCL shares resources with OpenGL ES.
-static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
-static EGLContext g_egl_context = EGL_NO_CONTEXT;
-static EGLSurface g_egl_surface = EGL_NO_SURFACE;
-
-static bool init_egl_for_opencl() {
-    LOGI("========================================");
-    LOGI("Initializing EGL Context for OpenCL");
-    LOGI("========================================");
-
-    // Get default display
-    g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (g_egl_display == EGL_NO_DISPLAY) {
-        LOGE("eglGetDisplay failed: 0x%x", eglGetError());
-        return false;
-    }
-
-    // Initialize EGL
-    EGLint major, minor;
-    if (!eglInitialize(g_egl_display, &major, &minor)) {
-        LOGE("eglInitialize failed: 0x%x", eglGetError());
-        return false;
-    }
-    LOGI("EGL initialized: version %d.%d", major, minor);
-
-    // Choose config for OpenGL ES 3.0
-    const EGLint config_attribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,  // Use pbuffer (offscreen)
-        EGL_BLUE_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_RED_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 0,
-        EGL_NONE
-    };
-
-    EGLConfig config;
-    EGLint num_configs;
-    if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &num_configs)) {
-        LOGE("eglChooseConfig failed: 0x%x", eglGetError());
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-
-    if (num_configs == 0) {
-        LOGE("No suitable EGL config found");
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-    LOGI("EGL config chosen");
-
-    // Create pbuffer surface (1x1 offscreen surface)
-    const EGLint surface_attribs[] = {
-        EGL_WIDTH, 1,
-        EGL_HEIGHT, 1,
-        EGL_NONE
-    };
-    g_egl_surface = eglCreatePbufferSurface(g_egl_display, config, surface_attribs);
-    if (g_egl_surface == EGL_NO_SURFACE) {
-        LOGE("eglCreatePbufferSurface failed: 0x%x", eglGetError());
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        return false;
-    }
-    LOGI("EGL pbuffer surface created");
-
-    // Create OpenGL ES 3.0 context
-    const EGLint context_attribs[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 3,  // OpenGL ES 3.0
-        EGL_NONE
-    };
-    g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
-    if (g_egl_context == EGL_NO_CONTEXT) {
-        LOGE("eglCreateContext failed: 0x%x", eglGetError());
-        eglDestroySurface(g_egl_display, g_egl_surface);
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        g_egl_surface = EGL_NO_SURFACE;
-        return false;
-    }
-    LOGI("EGL context created (OpenGL ES 3.0)");
-
-    // Make context current
-    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
-        LOGE("eglMakeCurrent failed: 0x%x", eglGetError());
-        eglDestroyContext(g_egl_display, g_egl_context);
-        eglDestroySurface(g_egl_display, g_egl_surface);
-        eglTerminate(g_egl_display);
-        g_egl_display = EGL_NO_DISPLAY;
-        g_egl_surface = EGL_NO_SURFACE;
-        g_egl_context = EGL_NO_CONTEXT;
-        return false;
-    }
-
-    LOGI("EGL context made current");
-    LOGI("========================================");
-    LOGI("EGL initialization complete!");
-    LOGI("OpenCL should now be able to access GPU");
-    LOGI("========================================");
-    return true;
-}
-
-static void cleanup_egl() {
-    if (g_egl_display != EGL_NO_DISPLAY) {
-        eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (g_egl_context != EGL_NO_CONTEXT) {
-            eglDestroyContext(g_egl_display, g_egl_context);
-        }
-        if (g_egl_surface != EGL_NO_SURFACE) {
-            eglDestroySurface(g_egl_display, g_egl_surface);
-        }
-        eglTerminate(g_egl_display);
-    }
-    g_egl_display = EGL_NO_DISPLAY;
-    g_egl_context = EGL_NO_CONTEXT;
-    g_egl_surface = EGL_NO_SURFACE;
-}
 
 struct llama_android_context {
     llama_model* model;
@@ -386,79 +127,21 @@ void token_callback(const std::string& token) {
     }
 }
 
-// ============================================================================
-// NOTE: CPU affinity configuration
-// ============================================================================
-// The official tool uses: --cpu-mask 0xfc --cpu-strict 1 --poll 1000
-// This is handled internally by llama.cpp's threadpool when n_threads is set.
-// We rely on the library's default threadpool behavior.
-
 extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
-        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads, jstring libPath, jstring dspLibPath) {
-    (void)thiz;  // Unused parameter (standard JNI pattern)
+        JNIEnv* env, jobject thiz, jstring modelPath, jint nThreads) {
 
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
+    LOGD("Loading model from: %s", path);
+    LOGD("Using %d threads", nThreads);
 
-    LOGI("========================================");
-    LOGI("GGUFChat with NPU/GPU Acceleration");
-    LOGI("========================================");
-
-    // Set log callback for llama.cpp
-    llama_log_set(ggml_log_callback_android, nullptr);
-
-    // CRITICAL: Initialize EGL context FIRST (required for OpenCL on Qualcomm Adreno GPU)
-    // This must be done before loading backends to allow OpenCL to detect GPU devices
-    if (!init_egl_for_opencl()) {
-        LOGE("EGL initialization failed - OpenCL GPU acceleration may not be available");
-    }
-
-    // Get paths
-    const char* nativeLibPath = env->GetStringUTFChars(libPath, nullptr);
-    const char* dspPath = env->GetStringUTFChars(dspLibPath, nullptr);
-
-    LOGI("Native library path: %s", nativeLibPath);
-    LOGI("DSP library path: %s", dspPath);
-
-    // CRITICAL: Set ADSP_LIBRARY_PATH to the external storage directory
-    // where HTP skel libraries were copied. The DSP can access external storage
-    // but NOT the app's private /data/app/ directory.
-    LOGI("Setting Hexagon DSP environment variables...");
-
-    // Build search path: DSP external dir first, then fallback paths
-    std::string dspSearchPath = std::string(dspPath) + ";" +
-                                std::string(nativeLibPath) +
-                                ";/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp";
-    setenv("ADSP_LIBRARY_PATH", dspSearchPath.c_str(), 1);
-    LOGI("ADSP_LIBRARY_PATH = %s", dspSearchPath.c_str());
-
-    // Set LD_LIBRARY_PATH for the stub libraries on Android side
-    setenv("LD_LIBRARY_PATH", nativeLibPath, 1);
-
-    // Load all backends from native library path (includes Hexagon NPU)
-    ggml_backend_load_all_from_path(nativeLibPath);
-
-    env->ReleaseStringUTFChars(libPath, nativeLibPath);
-    env->ReleaseStringUTFChars(dspLibPath, dspPath);
-    LOGI("Backends loaded dynamically");
-
-    // Initialize llama backend
     llama_backend_init();
-    LOGI("llama backend initialized");
-
-    // Load model with optimized parameters
-    LOGI("Loading model: %s", path);
 
     llama_model_params model_params = llama_model_default_params();
-
-    // Use single device mode to avoid splitting across CPU/GPU/NPU
-    model_params.split_mode = LLAMA_SPLIT_MODE_NONE;
-    model_params.n_gpu_layers = 99;  // Offload all layers to NPU
-    LOGI("Model params: split_mode=NONE, n_gpu_layers=99 (NPU acceleration)");
-
     llama_model* model = llama_model_load_from_file(path, model_params);
+
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (!model) {
@@ -468,59 +151,26 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeInit(
 
     const llama_vocab* vocab = llama_model_get_vocab(model);
     int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    int32_t n_layer = llama_model_n_layer(model);
-
-    LOGI("Model loaded successfully");
-    LOGI("  Vocab size: %d", n_vocab);
-    LOGI("  Total layers: %d", n_layer);
-
-    // Create context with official parameters
-    // Reference: examples/llama.android/lib/src/main/cpp/ai_chat.cpp:89-99
-    LOGI("----------------------------------------");
-    LOGI("Creating llama context...");
+    LOGD("Model loaded, vocab size: %d", n_vocab);
 
     llama_context_params ctx_params = llama_context_default_params();
-
-    // Configuration matching official command line tool
-    const int DEFAULT_CONTEXT_SIZE = 8192;
-    const int BATCH_SIZE = 128;  // Official uses 128, not 512!
-
-    ctx_params.n_ctx = DEFAULT_CONTEXT_SIZE;
-    ctx_params.n_batch = BATCH_SIZE;
-    ctx_params.n_ubatch = BATCH_SIZE;
+    ctx_params.n_ctx = 2048;
     ctx_params.n_threads = nThreads;
     ctx_params.n_threads_batch = nThreads;
-
-    // NOTE: Flash Attention is DISABLED for Hexagon NPU
-    // The crash in llama_context::llama_context may be caused by Flash Attention
-    // Official CLI does NOT use flash attention with Hexagon
-    // ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
-
-    LOGI("Context params (Hexagon NPU):");
-    LOGI("  - n_ctx: %d", ctx_params.n_ctx);
-    LOGI("  - n_batch: %d", ctx_params.n_batch);
-    LOGI("  - n_ubatch: %d", ctx_params.n_ubatch);
-    LOGI("  - threads: %d", nThreads);
-    LOGI("  - flash_attn: DISABLED (not supported by Hexagon)");
 
     llama_context* ctx = llama_init_from_model(model, ctx_params);
 
     if (!ctx) {
-        LOGE("❌ Failed to create context");
+        LOGE("Failed to create context");
         llama_model_free(model);
         return 0;
     }
-
-    LOGI("✓ Context created successfully");
 
     llama_android_context* android_ctx = new llama_android_context();
     android_ctx->model = model;
     android_ctx->ctx = ctx;
 
-    LOGI("========================================");
-    LOGI("✅ Initialization complete!");
-    LOGI("========================================");
-
+    LOGD("Model loaded successfully, context created");
     return reinterpret_cast<jlong>(android_ctx);
 }
 
@@ -582,7 +232,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
         jfloat temperature,
         jfloat topP,
         jint topK) {
-    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
@@ -667,9 +316,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
     const std::string end_marker = "<|im_end|>";
     bool found_end = false;
 
-    // Start timing for performance measurement
-    auto gen_start_time = std::chrono::high_resolution_clock::now();
-
 // Generation loop - no streaming, just collect all tokens
     for (int i = 0; i < nPredict; i++) {
         llama_token new_token = llama_sampler_sample(sampler, ctx, -1);
@@ -725,49 +371,8 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletion(
 
     llama_sampler_free(sampler);
 
-    // Synchronize to ensure all backend operations complete
-    llama_synchronize(ctx);
-    LOGD("Backend synchronized after generation");
-
-    // Calculate and log performance metrics
-    auto gen_end_time = std::chrono::high_resolution_clock::now();
-    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
-    double gen_time_sec = gen_duration.count() / 1000.0;
-    double tokens_per_sec = generation_token_count / gen_time_sec;
-
-    LOGI("========================================");
-    LOGI("⚡ PERFORMANCE STATS:");
-    LOGI("  Generated tokens: %d", generation_token_count);
-    LOGI("  Generation time: %.2f seconds", gen_time_sec);
-    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
-    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
-    LOGI("========================================");
-
-    // 🔍 CRITICAL DEBUG: Print backend usage statistics
-    LOGI("========================================");
-    LOGI("🔍 BACKEND USAGE STATISTICS:");
-    LOGI("========================================");
-
-    // Get performance statistics from llama.cpp
-    // This will show which backends were actually used during inference
-    struct llama_perf_context_data perf = llama_perf_context(ctx);
-
-    LOGI("📊 Context Performance:");
-    LOGI("  - Prompt eval time: %.2f ms", perf.t_p_eval_ms);
-    LOGI("  - Prompt eval count: %d", perf.n_p_eval);
-    LOGI("  - Token eval time: %.2f ms", perf.t_eval_ms);
-    LOGI("  - Token eval count: %d", perf.n_eval);
-    LOGI("  - Total time: %.2f ms", perf.t_p_eval_ms + perf.t_eval_ms);
-
-    if (perf.n_eval > 0) {
-        double avg_token_time = perf.t_eval_ms / perf.n_eval;
-        LOGI("  - Average per token: %.2f ms (%.2f tokens/s)",
-             avg_token_time, 1000.0 / avg_token_time);
-    }
-
-    LOGI("========================================");
-
     LOGD("Generated %zu bytes of text (%d tokens)", result.size(), generation_token_count);
+    LOGD("Final static result: '%s'", result.c_str());
     return env->NewStringUTF(result.c_str());
 }
 
@@ -785,7 +390,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
         jfloat topP,
         jint topK,
         jobject tokenCallback) {
-    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (!android_ctx || !android_ctx->ctx || !android_ctx->model) {
@@ -867,23 +471,14 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 
     LOGD("Tokenized to %d tokens", n_tokens);
 
-// Process prompt in batches (critical for prompts larger than n_batch)
-    // This prevents crashes when prompt exceeds n_batch size (e.g., 355 tokens > 128 batch size)
-    int n_batch = llama_n_batch(ctx);
-    LOGD("Processing prompt in batches (n_batch=%d, n_tokens=%d)", n_batch, n_tokens);
+// Process prompt
+    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
 
-    for (int i = 0; i < n_tokens; i += n_batch) {
-        int n_eval = std::min(n_batch, n_tokens - i);
-        llama_batch batch = llama_batch_get_one(tokens.data() + i, n_eval);
-
-        if (llama_decode(ctx, batch) != 0) {
-            LOGE("Failed to decode prompt batch [%d-%d]", i, i + n_eval - 1);
-            llama_sampler_free(sampler);
-            env->DeleteGlobalRef(g_callback_obj);
-            return env->NewStringUTF("Error: Failed to decode prompt");
-        }
-
-        LOGD("Decoded prompt batch [%d-%d]", i, i + n_eval - 1);
+    if (llama_decode(ctx, batch) != 0) {
+        LOGE("Failed to decode prompt");
+        llama_sampler_free(sampler);
+        env->DeleteGlobalRef(g_callback_obj);
+        return env->NewStringUTF("Error: Failed to decode prompt");
     }
 
     LOGD("Prompt decoded, starting streaming generation");
@@ -894,9 +489,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
     // This buffer accumulates token pieces, especially for split UTF-8 characters and end markers.
     std::string pending_token_buffer;
     int generation_token_count = 0;
-
-    // Start timing for performance measurement
-    auto gen_start_time = std::chrono::high_resolution_clock::now();
 
 // Generation loop - stream tokens as they are generated
     const std::string end_marker = "<|im_end|>";
@@ -985,16 +577,11 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
                 }
             }
         }
-        // Simple stop check: limit to 256 tokens for stability
-        if (generation_token_count >= 256) {
-            LOGD("Stopping: reached 256 token limit");
-            break;
-        }
 
 // Only continue decoding if we haven't found end marker
         if (!found_end) {
 // Decode next token
-            llama_batch batch = llama_batch_get_one(&new_token, 1);
+            batch = llama_batch_get_one(&new_token, 1);
             if (llama_decode(ctx, batch) != 0) {
                 LOGE("Failed to decode token %d", i);
                 break;
@@ -1024,48 +611,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 
     llama_sampler_free(sampler);
 
-    // Synchronize to ensure all backend operations complete
-    llama_synchronize(ctx);
-    LOGD("Backend synchronized after generation");
-
-    // Calculate and log performance metrics
-    auto gen_end_time = std::chrono::high_resolution_clock::now();
-    auto gen_duration = std::chrono::duration_cast<std::chrono::milliseconds>(gen_end_time - gen_start_time);
-    double gen_time_sec = gen_duration.count() / 1000.0;
-    double tokens_per_sec = generation_token_count / gen_time_sec;
-
-    LOGI("========================================");
-    LOGI("⚡ PERFORMANCE STATS:");
-    LOGI("  Generated tokens: %d", generation_token_count);
-    LOGI("  Generation time: %.2f seconds", gen_time_sec);
-    LOGI("  Speed: %.2f tokens/second", tokens_per_sec);
-    LOGI("  Average time per token: %.2f ms", (gen_time_sec * 1000.0) / generation_token_count);
-    LOGI("========================================");
-
-    // 🔍 CRITICAL DEBUG: Print backend usage statistics
-    LOGI("========================================");
-    LOGI("🔍 BACKEND USAGE STATISTICS:");
-    LOGI("========================================");
-
-    // Get performance statistics from llama.cpp
-    // This will show which backends were actually used during inference
-    struct llama_perf_context_data perf = llama_perf_context(ctx);
-
-    LOGI("📊 Context Performance:");
-    LOGI("  - Prompt eval time: %.2f ms", perf.t_p_eval_ms);
-    LOGI("  - Prompt eval count: %d", perf.n_p_eval);
-    LOGI("  - Token eval time: %.2f ms", perf.t_eval_ms);
-    LOGI("  - Token eval count: %d", perf.n_eval);
-    LOGI("  - Total time: %.2f ms", perf.t_p_eval_ms + perf.t_eval_ms);
-
-    if (perf.n_eval > 0) {
-        double avg_token_time = perf.t_eval_ms / perf.n_eval;
-        LOGI("  - Average per token: %.2f ms (%.2f tokens/s)",
-             avg_token_time, 1000.0 / avg_token_time);
-    }
-
-    LOGI("========================================");
-
     LOGD("Generated %zu bytes of text (%d tokens)", total_generated_text.size(), generation_token_count);
 
 // Clean up global callback
@@ -1081,8 +626,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeCompletionStreaming(
 JNIEXPORT void JNICALL
 Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
         JNIEnv* env, jobject thiz, jlong contextPtr) {
-    (void)env;   // Unused parameter (standard JNI pattern)
-    (void)thiz;  // Unused parameter (standard JNI pattern)
 
     llama_android_context* android_ctx = reinterpret_cast<llama_android_context*>(contextPtr);
     if (android_ctx) {
@@ -1098,10 +641,6 @@ Java_com_stdemo_ggufchat_GGUFChatEngine_nativeFree(
     }
 
     llama_backend_free();
-
-    // Cleanup EGL resources
-    cleanup_egl();
-    LOGD("EGL resources cleaned up");
 }
 
 }  // extern "C"

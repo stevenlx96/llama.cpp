@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 message(STATUS "========================================")
-message(STATUS "GGUFChat with NPU/GPU Acceleration")
+message(STATUS "CMAKE BUILD START")
 message(STATUS "========================================")
 
 # ============================================================================
@@ -37,23 +37,6 @@ foreach(lib ${REQUIRED_LIBS})
     endif()
     message(STATUS "Found ${lib}")
 endforeach()
-
-# Check for optional acceleration libraries
-if(EXISTS "${PREBUILT_LIB_DIR}/libggml-opencl.so")
-    message(STATUS "Found libggml-opencl.so (GPU acceleration)")
-    set(HAS_OPENCL ON)
-else()
-    message(STATUS "libggml-opencl.so not found (GPU acceleration disabled)")
-    set(HAS_OPENCL OFF)
-endif()
-
-if(EXISTS "${PREBUILT_LIB_DIR}/libggml-hexagon.so")
-    message(STATUS "Found libggml-hexagon.so (NPU acceleration)")
-    set(HAS_HEXAGON ON)
-else()
-    message(STATUS "libggml-hexagon.so not found (NPU acceleration disabled)")
-    set(HAS_HEXAGON OFF)
-endif()
 
 # ============================================================================
 # Create JNI Wrapper
@@ -94,17 +77,9 @@ target_link_libraries(llama-android PRIVATE
         atomic
 )
 
-# EGL is required for OpenCL on Qualcomm Adreno GPUs
-# Must be linked even if we don't use OpenCL directly
-target_link_libraries(llama-android PRIVATE EGL)
-
 # ============================================================================
 # Import Prebuilt Libraries
 # ============================================================================
-
-# Note: We link to llama.so and ggml.so at compile time.
-# Other backends (CPU, OpenCL, Hexagon) are loaded dynamically at runtime
-# via ggml_backend_load_all_from_path()
 
 # llama (main library)
 add_library(llama_prebuilt SHARED IMPORTED GLOBAL)
@@ -164,9 +139,5 @@ target_link_options(llama-android PRIVATE
 
 message(STATUS "========================================")
 message(STATUS "CMAKE CONFIGURATION COMPLETE")
-if(HAS_OPENCL OR HAS_HEXAGON)
-    message(STATUS "Acceleration: GPU=${HAS_OPENCL}, NPU=${HAS_HEXAGON}")
-else()
-    message(STATUS "Acceleration: CPU only")
-endif()
+message(STATUS "Acceleration: CPU only")
 message(STATUS "========================================")

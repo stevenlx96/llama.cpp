@@ -1,23 +1,20 @@
 package com.stdemo.ggufchat
 
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-class GGUFChatEngine(private val context: Context) {
+class GGUFChatEngine {
 
     companion object {
         private const val TAG = "GGUFChatEngine"
-        private const val DSP_LIB_DIR = "dsp_libs"  // Subdirectory for DSP libraries
     }
 
     // Native methods
-    private external fun nativeInit(modelPath: String, nThreads: Int, libPath: String, dspLibPath: String): Long
+    private external fun nativeInit(modelPath: String, nThreads: Int): Long
 
     // Static (non-streaming) completion - returns complete response at once
     private external fun nativeCompletion(
@@ -54,8 +51,6 @@ class GGUFChatEngine(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isGenerating = AtomicBoolean(false)
     private val shouldStopGeneration = AtomicBoolean(false)
-    private var nativeLibraryPath: String = ""
-    private var dspLibraryPath: String = ""  // Path for DSP/HTP libraries (accessible by DSP)
 
     // Configuration and history
     private val promptBuilder = ChatPromptBuilder()
@@ -64,14 +59,6 @@ class GGUFChatEngine(private val context: Context) {
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
-            // Get native library path
-            nativeLibraryPath = context.applicationInfo.nativeLibraryDir
-            Log.d(TAG, "Native library path: $nativeLibraryPath")
-
-            // Prepare DSP libraries in external storage (where DSP can access them)
-            dspLibraryPath = prepareDspLibraries()
-            Log.d(TAG, "DSP library path: $dspLibraryPath")
-
             System.loadLibrary("llama-android")
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
 
@@ -82,40 +69,6 @@ class GGUFChatEngine(private val context: Context) {
             Log.e(TAG, "FATAL: Failed to initialize native libraries", e)
             throw RuntimeException("Native library initialization failed", e)
         }
-    }
-
-    /**
-     * Copy HTP skel libraries to external storage directory where DSP can access them.
-     * The DSP cannot access app-private directories due to Android sandboxing,
-     * but it CAN access the app's external files directory.
-     */
-    private fun prepareDspLibraries(): String {
-        val dspDir = File(context.getExternalFilesDir(null), DSP_LIB_DIR)
-        if (!dspDir.exists()) {
-            dspDir.mkdirs()
-        }
-
-        val nativeLibDir = File(nativeLibraryPath)
-        val htpLibs = nativeLibDir.listFiles { file ->
-            file.name.startsWith("libggml-htp-") && file.name.endsWith(".so")
-        } ?: emptyArray()
-
-        Log.d(TAG, "Found ${htpLibs.size} HTP libraries to copy for DSP access")
-
-        for (htpLib in htpLibs) {
-            val destFile = File(dspDir, htpLib.name)
-            // Only copy if not exists or different size (simple check)
-            if (!destFile.exists() || destFile.length() != htpLib.length()) {
-                Log.d(TAG, "Copying ${htpLib.name} to DSP-accessible directory...")
-                htpLib.copyTo(destFile, overwrite = true)
-                // Make readable by others (DSP runs in different process)
-                destFile.setReadable(true, false)
-            } else {
-                Log.d(TAG, "${htpLib.name} already in DSP directory")
-            }
-        }
-
-        return dspDir.absolutePath
     }
 
     suspend fun loadModel(path: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -131,9 +84,7 @@ class GGUFChatEngine(private val context: Context) {
             // Use available CPU cores for inference
             val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(4, 8)
             Log.d(TAG, "Using $numThreads threads for inference")
-            Log.d(TAG, "Native library path: $nativeLibraryPath")
-            Log.d(TAG, "DSP library path: $dspLibraryPath")
-            contextPtr = nativeInit(path, numThreads, nativeLibraryPath, dspLibraryPath)
+            contextPtr = nativeInit(path, numThreads)
 
             if (contextPtr == 0L) {
                 return@withContext Result.failure(Exception("Model loading failed"))

@@ -1,9 +1,8 @@
 @echo off
-REM Copy llama.cpp libraries to GGUFChat project (with optional NPU/GPU acceleration)
+REM Copy llama.cpp libraries to GGUFChat project (CPU only)
 
 echo =========================================
 echo Copying llama.cpp Libraries
-echo (with NPU/GPU acceleration support)
 echo =========================================
 echo.
 
@@ -35,33 +34,12 @@ if exist "%SRC_LIB%\libomp.so" (
     copy /Y "%SRC_LIB%\libomp.so" "%DEST_LIB%\"
 )
 
-REM Optional: Copy OpenCL backend (GPU acceleration)
-if exist "%SRC_LIB%\libggml-opencl.so" (
-    echo Copying libggml-opencl.so (GPU acceleration)...
-    copy /Y "%SRC_LIB%\libggml-opencl.so" "%DEST_LIB%\"
-)
-
-REM Optional: Copy Hexagon backend (NPU acceleration)
-if exist "%SRC_LIB%\libggml-hexagon.so" (
-    echo Copying libggml-hexagon.so (NPU acceleration)...
-    copy /Y "%SRC_LIB%\libggml-hexagon.so" "%DEST_LIB%\"
-)
-
-REM Optional: Copy Hexagon HTP libraries
-for %%f in ("%SRC_LIB%\libggml-htp*.so") do (
-    echo Copying %%~nxf (Hexagon HTP)...
-    copy /Y "%%f" "%DEST_LIB%\"
-)
-
 echo.
 echo =========================================
 echo All libraries copied successfully!
 echo =========================================
 echo.
 echo Copied to: %DEST_LIB%
-echo.
-echo Note: Backends (CPU, OpenCL, Hexagon) are loaded
-echo       dynamically at runtime via ggml_backend_load_all_from_path()
 echo.
 echo Next step: gradlew assembleDebug
 goto :end

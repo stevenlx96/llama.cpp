@@ -17,7 +17,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            // Only build for 64-bit ARM (required for Hexagon NPU)
             abiFilters += listOf("arm64-v8a")
         }
     }

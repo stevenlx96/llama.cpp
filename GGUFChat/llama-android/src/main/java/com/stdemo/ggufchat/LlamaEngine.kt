@@ -59,6 +59,9 @@ class GGUFChatEngine {
     init {
         Log.d(TAG, "Initializing GGUFChatEngine, loading native libraries...")
         try {
+            // CRITICAL FIX: Only load llama-android
+            // CMakeLists.txt handles ALL dependency linking
+            // This is the correct and simple approach
             System.loadLibrary("llama-android")
             Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
 
@@ -81,9 +84,7 @@ class GGUFChatEngine {
             Log.d(TAG, "Loading model from: $path")
             Log.d(TAG, "Model size: ${file.length() / 1024 / 1024} MB")
 
-            // Use available CPU cores for inference
-            val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(4, 8)
-            Log.d(TAG, "Using $numThreads threads for inference")
+            val numThreads = Runtime.getRuntime().availableProcessors()
             contextPtr = nativeInit(path, numThreads)
 
             if (contextPtr == 0L) {

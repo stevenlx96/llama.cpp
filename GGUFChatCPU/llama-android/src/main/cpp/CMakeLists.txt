@@ -150,6 +150,12 @@ else()
     target_link_libraries(llama-android PRIVATE llama_prebuilt)
     message(STATUS "Linked llama_prebuilt to llama-android (with transitive dependencies)")
     message(STATUS "Intent recognition: DISABLED")
+    message(STATUS "  To enable intent recognition:")
+    message(STATUS "    1. Download ONNX Runtime Android AAR (v1.17.0) from:")
+    message(STATUS "       https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.17.0/")
+    message(STATUS "    2. Extract libonnxruntime.so for ${ANDROID_ABI} and place it in:")
+    message(STATUS "       ${PREBUILT_LIB_DIR}/")
+    message(STATUS "    3. Delete the .cxx build directory to clear CMake cache, then rebuild")
 endif()
 
 # ============================================================================

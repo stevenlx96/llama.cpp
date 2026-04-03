@@ -1,0 +1,5 @@
+CMake Error at CMakeLists.txt:48 (message):
+  ERROR: libggml-base.so not found at
+  E:/MyGithub/llama.cpp/GGUFChatCPU/llama-android/src/main/cpp/../jniLibs/arm64-v8a/libggml-base.so
+
+

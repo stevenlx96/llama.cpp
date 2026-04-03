@@ -98,10 +98,16 @@ set_target_properties(ggml_prebuilt PROPERTIES
 # ============================================================================
 
 if(ENABLE_INTENT_RECOGNITION)
+    # Create proper imported target for ONNX Runtime
+    add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
+    set_target_properties(onnxruntime_prebuilt PROPERTIES
+        IMPORTED_LOCATION "${ONNXRUNTIME_LIB}"
+    )
+
     target_link_libraries(llama-android PRIVATE
         llama_prebuilt
         ggml_prebuilt
-        "${ONNXRUNTIME_LIB}"
+        onnxruntime_prebuilt
     )
     target_compile_definitions(llama-android PRIVATE ENABLE_INTENT_RECOGNITION)
     message(STATUS "Intent recognition: ENABLED")
@@ -132,7 +138,6 @@ target_compile_options(llama-android PRIVATE
 # ============================================================================
 
 target_link_options(llama-android PRIVATE
-        -Wl,--allow-shlib-undefined
         -Wl,-soname,libllama-android.so
         -Wl,--export-dynamic
 )

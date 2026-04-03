@@ -1,8 +1,5 @@
 package com.stdemo.ggufchat
 
-import android.os.Build
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -41,7 +38,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val modelsDir = getExternalFilesDir("models")?.absolutePath ?: return
+        val modelsDir = File(filesDir, "models/llm").also { it.mkdirs() }.absolutePath
         modelManager = ModelManager(modelsDir)
 
         setupRecyclerView()
@@ -143,48 +140,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ (API 33+)
-            // 注意：getExternalFilesDir() 不需要权限，但为了兼容性还是请求
-            // 无论权限如何，都应该尝试加载模型
-            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED) {
-                // 权限已授予，直接加载
-                tryLoadModelFromStorage()
-            } else {
-                // 请求权限
-                requestPermissions(arrayOf(
-                    Manifest.permission.READ_MEDIA_IMAGES,
-                    Manifest.permission.READ_MEDIA_VIDEO,
-                    Manifest.permission.READ_MEDIA_AUDIO
-                ), 1)
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(
-                    Manifest.permission.READ_EXTERNAL_STORAGE,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ), 1)
-            } else {
-                tryLoadModelFromStorage()
-            }
-        } else {
-            tryLoadModelFromStorage()
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1) {
-            if ((grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
-                tryLoadModelFromStorage()
-            } else {
-                Toast.makeText(this, "Storage permission required to load models", Toast.LENGTH_SHORT).show()
-            }
-        }
+        // 使用内部存储 (filesDir)，不需要额外权限，直接加载
+        tryLoadModelFromStorage()
     }
 
     /**
@@ -323,11 +280,7 @@ class MainActivity : AppCompatActivity() {
      * 开始下载模型
      */
     private fun startModelDownload(modelScopeId: String, fileName: String) {
-        val modelDir = getExternalFilesDir("models")?.absolutePath
-        if (modelDir == null) {
-            Toast.makeText(this, "Unable to access storage directory", Toast.LENGTH_SHORT).show()
-            return
-        }
+        val modelDir = File(filesDir, "models/llm").also { it.mkdirs() }.absolutePath
 
         binding.downloadButton.isEnabled = false
         updateStatusText("Downloading: $fileName...")
@@ -468,10 +421,10 @@ class MainActivity : AppCompatActivity() {
             appendLine()
 
             // 1. 应用存储路径
-            val externalFilesDir = getExternalFilesDir("models")
+            val llmModelsDir = File(filesDir, "models/llm")
             appendLine("【当前使用的路径】")
-            appendLine("路径: ${externalFilesDir?.absolutePath ?: "NULL"}")
-            appendLine("存在: ${externalFilesDir?.exists() ?: false}")
+            appendLine("路径: ${llmModelsDir.absolutePath}")
+            appendLine("存在: ${llmModelsDir.exists()}")
             appendLine()
 
             // 2. 扫描的模型文件
@@ -497,7 +450,7 @@ class MainActivity : AppCompatActivity() {
             appendLine()
 
             // 3. 目录内容
-            val modelsDir = File(externalFilesDir?.absolutePath ?: "")
+            val modelsDir = llmModelsDir
             appendLine("【目录完整内容】")
             if (modelsDir.exists() && modelsDir.isDirectory) {
                 val allFiles = modelsDir.listFiles()
@@ -516,26 +469,20 @@ class MainActivity : AppCompatActivity() {
 
             // 4. 存储空间信息
             appendLine("【存储空间】")
-            val externalDir = getExternalFilesDir(null)
-            if (externalDir != null) {
-                val usableSpace = externalDir.usableSpace / (1024 * 1024)
-                val totalSpace = externalDir.totalSpace / (1024 * 1024)
-                appendLine("可用空间: $usableSpace MB")
-                appendLine("总空间: $totalSpace MB")
-            }
+            val usableSpace = filesDir.usableSpace / (1024 * 1024)
+            val totalSpace = filesDir.totalSpace / (1024 * 1024)
+            appendLine("可用空间: $usableSpace MB")
+            appendLine("总空间: $totalSpace MB")
             appendLine()
 
-            // 5. 重要提示
-            appendLine("【重要说明】")
-            appendLine("⚠️ getExternalFilesDir() 的数据会在以下情况消失:")
-            appendLine("1. 卸载应用")
-            appendLine("2. 清除应用数据")
-            appendLine("3. 系统自动清理（某些情况下）")
-            appendLine()
-            appendLine("💡 如果模型总是消失，检查:")
-            appendLine("1. 是否频繁重装应用?")
-            appendLine("2. 是否在设置中清除了数据?")
-            appendLine("3. 下载是否真的完成?")
+            // 5. 目录结构
+            appendLine("【models 目录结构】")
+            val modelsRoot = File(filesDir, "models")
+            if (modelsRoot.exists()) {
+                modelsRoot.listFiles()?.forEach { sub ->
+                    appendLine("  ${sub.name}/ (${sub.listFiles()?.size ?: 0} files)")
+                }
+            }
         }
 
         // 显示诊断信息

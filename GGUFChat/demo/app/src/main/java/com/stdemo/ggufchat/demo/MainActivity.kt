@@ -1,8 +1,5 @@
 package com.stdemo.ggufchat.demo
 
-import android.os.Build
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.widget.EditText
@@ -60,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val modelsDir = getExternalFilesDir("models")?.absolutePath ?: return
+        val modelsDir = java.io.File(filesDir, "models/llm").also { it.mkdirs() }.absolutePath
         modelManager = ModelManager(modelsDir)
         modelConfig = ModelConfig(this)
 
@@ -320,9 +317,10 @@ class MainActivity : AppCompatActivity() {
 
             // Storage
             appendLine("[Storage]")
-            appendLine("  Public available: ${PersistentStorageHelper.isPublicStorageAvailable()}")
-            val recommended = PersistentStorageHelper.getRecommendedModelsDir(this@MainActivity)
-            appendLine("  Recommended dir: ${recommended.absolutePath}")
+            val llmDir = PersistentStorageHelper.getLlmModelsDir(this@MainActivity)
+            appendLine("  LLM models dir: ${llmDir.absolutePath}")
+            val intentDir = PersistentStorageHelper.getIntentModelsDir(this@MainActivity)
+            appendLine("  Intent models dir: ${intentDir.absolutePath}")
         }
         addMessage(Message(info, isUser = false))
 
@@ -387,35 +385,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED) {
-                tryLoadModel()
-            } else {
-                requestPermissions(arrayOf(
-                    Manifest.permission.READ_MEDIA_IMAGES,
-                    Manifest.permission.READ_MEDIA_VIDEO,
-                    Manifest.permission.READ_MEDIA_AUDIO
-                ), 1)
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(
-                    Manifest.permission.READ_EXTERNAL_STORAGE,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ), 1)
-            } else {
-                tryLoadModel()
-            }
-        } else {
-            tryLoadModel()
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            tryLoadModel()
-        }
+        // 使用内部存储 (filesDir)，不需要额外权限，直接加载
+        tryLoadModel()
     }
 
     private fun tryLoadModel() {
@@ -523,7 +494,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun downloadModel(modelScopeId: String, fileName: String) {
-        val modelDir = getExternalFilesDir("models")?.absolutePath ?: return
+        val modelDir = java.io.File(filesDir, "models/llm").also { it.mkdirs() }.absolutePath
 
         binding.downloadButton.isEnabled = false
         binding.statusText.text = "Downloading: $fileName..."

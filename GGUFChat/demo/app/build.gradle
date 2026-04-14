@@ -63,8 +63,16 @@ repositories {
 }
 
 dependencies {
-    // Local AAR dependency - 使用 release 版本避免 Java 版本兼容性问题
-    implementation files('libs/llama-android-release.aar')
+    // Local AAR dependency — consume through the flatDir repository declared
+    // above using the (name, ext) form. The earlier `files('libs/*.aar')` form
+    // triggers AGP 4.2's "Null extracted folder for artifact" bug during
+    // IDE sync / model build, because AGP's ArtifactHandler cannot unpack a
+    // raw-file AAR that wasn't resolved through a declared repository.
+    //
+    // Drop the AAR built by `:llama-android:assembleDemoRelease` (which
+    // produces `llama-android-demo-release.aar`) into `libs/` and rename it
+    // to `llama-android-release.aar`, or adjust `name:` below to match.
+    implementation(name: 'llama-android-release', ext: 'aar')
 
     // AndroidX Core Libraries (使用兼容 Kotlin 1.5.32 的版本)
     implementation "androidx.core:core-ktx:1.7.0"

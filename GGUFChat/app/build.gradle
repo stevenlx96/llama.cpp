@@ -49,6 +49,26 @@ android {
         viewBinding true
         dataBinding true
     }
+
+    // Both `app` and `llama-android` ship the same set of native .so files under
+    // arm64-v8a/ (see their respective src/main/jniLibs). llama-android is the
+    // canonical source because its jniLibs must be embedded into the AAR. When
+    // `app` also depends on project(':llama-android'), AGP will try to merge
+    // both copies and fail with "More than one file was found with OS
+    // independent path 'lib/arm64-v8a/libllama.so'". Deduplicate here.
+    packagingOptions {
+        jniLibs {
+            pickFirsts += [
+                'lib/arm64-v8a/libggml-base.so',
+                'lib/arm64-v8a/libggml-cpu.so',
+                'lib/arm64-v8a/libggml.so',
+                'lib/arm64-v8a/libllama.so',
+                'lib/arm64-v8a/libllama-android.so',
+                'lib/arm64-v8a/libomp.so',
+                'lib/arm64-v8a/libonnxruntime.so',
+            ]
+        }
+    }
 }
 
 dependencies {

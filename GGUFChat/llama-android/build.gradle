@@ -107,7 +107,8 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            consumerProguardFiles 'src/main/consumer-rules.pro'
+            // consumer-rules.pro is already declared once in defaultConfig — do
+            // not duplicate it here or AGP will look for two different paths.
         }
     }
 

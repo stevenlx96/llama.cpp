@@ -13,3 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Build directories
+**/build/
+/build/
+
+# AAR files
+*.aar

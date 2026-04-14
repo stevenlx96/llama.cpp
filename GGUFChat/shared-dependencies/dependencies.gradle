@@ -1,0 +1,195 @@
+// =============================================================================
+// Shared Dependencies Configuration
+// mobile-application-model Group 统一依赖版本管理
+// =============================================================================
+//
+// 用途：为 group 下所有项目提供统一的依赖版本管理
+// 维护：所有依赖版本变更都在此文件中进行
+//
+// 使用方式：
+//   apply from: 'https://gitlab.com/api/v4/projects/PROJECT_ID/repository/files/dependencies.gradle/raw?ref=main'
+// 或
+//   apply from: rootProject.file('shared-dependencies/dependencies.gradle')
+//
+// =============================================================================
+
+ext {
+    // =============================================================================
+    // 版本号定义 - Version Numbers
+    // 所有依赖的版本号集中管理，确保版本一致性
+    // =============================================================================
+
+    versions = [
+        // Kotlin (Java 8 兼容版本)
+        kotlin            : "1.5.32",
+
+        // AndroidX Core (Java 8 兼容版本)
+        coreKtx           : "1.8.0",
+        appcompat         : "1.4.2",
+        lifecycle         : "2.5.1",
+        activity          : "1.5.1",
+        constraintlayout  : "2.1.3",
+
+        // Coroutines (Java 8 兼容版本)
+        coroutines        : "1.5.2",
+
+        // Testing
+        junit             : "4.13.2",
+        androidxJunit      : "1.1.3",
+        espresso          : "3.4.0",
+    ]
+
+    // =============================================================================
+    // 公共依赖 - Common Dependencies
+    // 所有项目都需要的核心依赖
+    // =============================================================================
+
+    commonDeps = [
+        // Kotlin 标准库
+        kotlinStdlib      : "org.jetbrains.kotlin:kotlin-stdlib:${versions.kotlin}",
+
+        // AndroidX 核心库（不包含资源的纯代码库）
+        coreKtx           : "androidx.core:core-ktx:${versions.coreKtx}",
+        lifecycleRuntime  : "androidx.lifecycle:lifecycle-runtime-ktx:${versions.lifecycle}",
+        activityKtx       : "androidx.activity:activity-ktx:${versions.activity}",
+
+        // 协程库
+        coroutinesAndroid : "org.jetbrains.kotlinx:kotlinx-coroutines-android:${versions.coroutines}",
+        coroutinesCore    : "org.jetbrains.kotlinx:kotlinx-coroutines-core:${versions.coroutines}",
+    ]
+
+    // =============================================================================
+    // UI 依赖 - UI Dependencies
+    // 包含 Android 资源的库，按需使用
+    // =============================================================================
+
+    uiDeps = [
+        appcompat         : "androidx.appcompat:appcompat:${versions.appcompat}",
+        lifecycleViewModel: "androidx.lifecycle:lifecycle-viewmodel-ktx:${versions.lifecycle}",
+        constraintlayout  : "androidx.constraintlayout:constraintlayout:${versions.constraintlayout}",
+    ]
+
+    // =============================================================================
+    // 测试依赖 - Test Dependencies
+    // 单元测试和仪器测试
+    // =============================================================================
+
+    testDeps = [
+        junit             : "junit:junit:${versions.junit}",
+        androidxJunit      : "androidx.test.ext:junit:${versions.androidxJunit}",
+        espresso          : "androidx.test.espresso:espresso-core:${versions.espresso}",
+    ]
+
+    // =============================================================================
+    // 便利方法 - Helper Methods
+    // 简化依赖声明
+    // =============================================================================
+
+    /**
+     * 添加所有公共依赖（implementation）
+     *
+     * 使用示例：
+     * dependencies {
+     *     addCommonDependencies(delegate)
+     * }
+     */
+    addCommonDependencies = { dependencyHandler ->
+        [
+            commonDeps.kotlinStdlib,
+            commonDeps.coreKtx,
+            commonDeps.lifecycleRuntime,
+            commonDeps.activityKtx,
+            commonDeps.coroutinesAndroid,
+            commonDeps.coroutinesCore,
+        ].each { dep ->
+            dependencyHandler.implementation dep
+        }
+    }
+
+    /**
+     * 添加所有公共依赖到 Fat-AAR（embed）
+     *
+     * 使用示例：
+     * dependencies {
+     *     if (useFatAar) {
+     *         addCommonDependenciesToFatAar(delegate)
+     *     }
+     * }
+     */
+    addCommonDependenciesToFatAar = { dependencyHandler ->
+        [
+            commonDeps.kotlinStdlib,
+            commonDeps.coreKtx,
+            commonDeps.lifecycleRuntime,
+            commonDeps.activityKtx,
+            commonDeps.coroutinesAndroid,
+            commonDeps.coroutinesCore,
+        ].each { dep ->
+            dependencyHandler.embed dep
+        }
+    }
+
+    /**
+     * 添加 UI 依赖（implementation）
+     */
+    addUIDependencies = { dependencyHandler ->
+        [
+            uiDeps.appcompat,
+            uiDeps.lifecycleViewModel,
+            uiDeps.constraintlayout,
+        ].each { dep ->
+            dependencyHandler.implementation dep
+        }
+    }
+
+    /**
+     * 添加 UI 依赖到 Fat-AAR（embed）
+     */
+    addUIDependenciesToFatAar = { dependencyHandler ->
+        [
+            uiDeps.appcompat,
+            uiDeps.lifecycleViewModel,
+            uiDeps.constraintlayout,
+        ].each { dep ->
+            dependencyHandler.embed dep
+        }
+    }
+
+    /**
+     * 添加测试依赖
+     */
+    addTestDependencies = { dependencyHandler ->
+        dependencyHandler.testImplementation testDeps.junit
+        dependencyHandler.androidTestImplementation testDeps.androidxJunit
+        dependencyHandler.androidTestImplementation testDeps.espresso
+    }
+}
+
+// =============================================================================
+// 版本检查 - Version Validation
+// 确保所有必需的版本都已定义
+// =============================================================================
+
+afterEvaluate {
+    def requiredVersions = ['kotlin', 'coreKtx', 'coroutines']
+    def missingVersions = requiredVersions.findAll { !versions[it] }
+
+    if (missingVersions) {
+        throw new GradleException("Missing required version definitions: ${missingVersions}")
+    }
+}
+
+// =============================================================================
+// 导出说明 - Export Information
+// =============================================================================
+
+println """
+╔════════════════════════════════════════════════════════════════╗
+║           Shared Dependencies Configuration                    ║
+╠════════════════════════════════════════════════════════════════╣
+║  Kotlin         : ${versions.kotlin}                              ║
+║  AndroidX Core  : ${versions.coreKtx}                             ║
+║  Lifecycle      : ${versions.lifecycle}                           ║
+║  Coroutines     : ${versions.coroutines}                          ║
+╚════════════════════════════════════════════════════════════════╝
+"""

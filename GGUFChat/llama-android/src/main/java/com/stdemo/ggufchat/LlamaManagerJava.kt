@@ -1,0 +1,385 @@
+package com.stdemo.ggufchat
+
+import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * Java 友好的 Llama Chat Manager 包装类
+ *
+ * 为 Java 和 JNI (UE, Unity 等) 提供简单易用的 API
+ * 解决 Kotlin suspend 函数和协程无法直接从 Java 调用的问题
+ *
+ * 使用示例：
+ * ```java
+ * LlamaManagerJava llama = new LlamaManagerJava(context);
+ *
+ * // 设置回调
+ * llama.setOnResponse(new LlamaCallback() {
+ *     @Override
+ *     public void onSuccess(String text) {
+ *         // 处理生成结果
+ *         Log.i(TAG, "生成结果: " + text);
+ *     }
+ *
+ *     @Override
+ *     public void onError(Throwable error) {
+ *         // 处理错误
+ *         Log.e(TAG, "错误: " + error.getMessage());
+ *     }
+ * });
+ *
+ * // 同步初始化（阻塞）
+ * boolean success = llama.initializeSync();
+ *
+ * // 发送消息
+ * llama.sendMessage("你好，请介绍一下自己");
+ *
+ * // 开始新对话
+ * llama.startNewChat();
+ *
+ * // 释放资源
+ * llama.release();
+ * ```
+ *
+ * 回调接口说明：
+ * - OnResponse: 生成响应回调
+ * - OnStateChanged: 状态变化回调
+ * - OnError: 错误回调
+ */
+class LlamaManagerJava(private val context: Context) {
+
+    companion object {
+        private const val TAG = "LlamaManagerJava"
+        private const val DEFAULT_TIMEOUT_MS = 30000L // 30 秒超时
+    }
+
+    // 核心管理器
+    private val engine: LlamaEngine = LlamaEngine(context)
+
+    // 主线程 Handler，用于回调
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // 状态标志
+    @Volatile
+    private var isInitializedState = false
+
+    // 回调接口
+    private var onResponseCallback: LlamaCallback<String>? = null
+    private var onStateChangedCallback: StateChangedCallback? = null
+    private var onErrorCallback: ErrorCallback? = null
+
+    // ==================== 初始化方法 ====================
+
+    /**
+     * 同步初始化（阻塞调用）
+     *
+     * ⚠️ 警告：此方法会阻塞调用线程，建议在后台线程调用
+     *
+     * @return 是否初始化成功
+     */
+    fun initializeSync(): Boolean {
+        return try {
+            Log.d(TAG, "Initializing synchronously...")
+
+            // 设置内部回调
+            setupInternalCallbacks()
+
+            // 初始化引擎
+            val success = engine.initialize()
+            isInitializedState = success
+
+            if (success) {
+                Log.d(TAG, "Initialized successfully")
+            } else {
+                Log.e(TAG, "Initialization failed")
+            }
+
+            success
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in initializeSync", e)
+            false
+        }
+    }
+
+    /**
+     * 同步初始化（指定模型路径）
+     *
+     * @param modelPath 模型文件路径
+     * @return 是否初始化成功
+     */
+    fun initializeSync(modelPath: String): Boolean {
+        return try {
+            Log.d(TAG, "Initializing synchronously with model: $modelPath")
+
+            // 设置内部回调
+            setupInternalCallbacks()
+
+            // 初始化引擎
+            val success = engine.initialize(modelPath)
+            isInitializedState = success
+
+            if (success) {
+                Log.d(TAG, "Initialized successfully")
+            } else {
+                Log.e(TAG, "Initialization failed")
+            }
+
+            success
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in initializeSync", e)
+            false
+        }
+    }
+
+    // ==================== 回调设置方法 ====================
+
+    /**
+     * 设置响应回调
+     */
+    fun setOnResponse(callback: LlamaCallback<String>?) {
+        this.onResponseCallback = callback
+    }
+
+    /**
+     * 设置状态变化回调
+     */
+    fun setOnStateChanged(callback: StateChangedCallback?) {
+        this.onStateChangedCallback = callback
+    }
+
+    /**
+     * 设置错误回调
+     */
+    fun setOnError(callback: ErrorCallback?) {
+        this.onErrorCallback = callback
+    }
+
+    // ==================== 消息发送方法 ====================
+
+    /**
+     * 发送消息
+     *
+     * @param message 用户消息
+     */
+    fun sendMessage(message: String) {
+        if (!isInitializedState) {
+            onErrorCallback?.onError("Not initialized")
+            return
+        }
+
+        try {
+            Log.d(TAG, "Sending message: $message")
+            engine.sendMessage(message)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send message", e)
+            onErrorCallback?.onError(e.message ?: "Unknown error")
+        }
+    }
+
+    /**
+     * 开始新的对话
+     */
+    fun startNewChat() {
+        if (!isInitializedState) {
+            onErrorCallback?.onError("Not initialized")
+            return
+        }
+
+        try {
+            Log.d(TAG, "Starting new chat")
+            engine.startNewChat()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start new chat", e)
+            onErrorCallback?.onError(e.message ?: "Unknown error")
+        }
+    }
+
+    /**
+     * 停止生成
+     */
+    fun stopGeneration() {
+        if (!isInitializedState) {
+            onErrorCallback?.onError("Not initialized")
+            return
+        }
+
+        try {
+            Log.d(TAG, "Stopping generation")
+            engine.stopGeneration()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop generation", e)
+            onErrorCallback?.onError(e.message ?: "Unknown error")
+        }
+    }
+
+    // ==================== 配置方法 ====================
+
+    /**
+     * 设置生成配置
+     *
+     * @param temperature 温度参数 (0.0-1.0)
+     * @param maxTokens 最大生成 token 数
+     * @param topP Top-p 采样参数
+     */
+    fun setGenerationConfig(
+        temperature: Float,
+        maxTokens: Int,
+        topP: Float
+    ) {
+        engine.setGenerationConfig(temperature, maxTokens, topP)
+        Log.d(TAG, "Generation config updated")
+    }
+
+    /**
+     * 设置系统提示词
+     *
+     * @param systemPrompt 系统提示词
+     */
+    fun setSystemPrompt(systemPrompt: String) {
+        engine.setSystemPrompt(systemPrompt)
+        Log.d(TAG, "System prompt updated")
+    }
+
+    // ==================== 状态查询方法 ====================
+
+    /**
+     * 检查模型是否就绪
+     */
+    fun isModelReady(): Boolean {
+        return engine.isModelReady()
+    }
+
+    /**
+     * 获取当前状态
+     * @return 状态字符串
+     */
+    fun getState(): String {
+        return engine.getState().name
+    }
+
+    /**
+     * 检查是否正在生成
+     */
+    fun isGenerating(): Boolean {
+        return getState() == "GENERATING"
+    }
+
+    /**
+     * 获取对话历史
+     *
+     * @return 对话历史列表
+     */
+    fun getChatHistory(): List<String> {
+        return engine.getChatHistory()
+    }
+
+    /**
+     * 获取模型目录路径
+     */
+    fun getModelDir(): String {
+        return engine.getModelDir().absolutePath
+    }
+
+    // ==================== 生命周期管理 ====================
+
+    /**
+     * 释放所有资源
+     */
+    fun release() {
+        try {
+            Log.d(TAG, "Releasing resources...")
+            engine.release()
+            isInitializedState = false
+            Log.d(TAG, "Resources released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing", e)
+        }
+    }
+
+    /**
+     * 获取引擎信息
+     */
+    fun getEngineInfo(): String {
+        return engine.getEngineInfo()
+    }
+
+    // ==================== 内部回调设置 ====================
+
+    private fun setupInternalCallbacks() {
+        // 响应回调
+        engine.onResponse = object : (String) -> Unit {
+            override fun invoke(text: String) {
+                mainHandler.post(object : Runnable {
+                    override fun run() {
+                        try {
+                            onResponseCallback?.onSuccess(text)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error in response callback", e)
+                        }
+                    }
+                })
+            }
+        }
+
+        // 状态变化回调
+        engine.onStateChanged = object : (LlamaEngine.EngineState) -> Unit {
+            override fun invoke(state: LlamaEngine.EngineState) {
+                mainHandler.post(object : Runnable {
+                    override fun run() {
+                        try {
+                            onStateChangedCallback?.onStateChanged(state.name)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error in state changed callback", e)
+                        }
+                    }
+                })
+            }
+        }
+
+        // 错误回调
+        engine.onError = object : (String) -> Unit {
+            override fun invoke(error: String) {
+                mainHandler.post(object : Runnable {
+                    override fun run() {
+                        try {
+                            onErrorCallback?.onError(error)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error in error callback", e)
+                        }
+                    }
+                })
+            }
+        }
+    }
+}
+
+// ==================== 回调接口定义 ====================
+
+/**
+ * 通用回调接口
+ */
+interface LlamaCallback<T> {
+    fun onSuccess(result: T)
+    fun onError(error: Throwable)
+}
+
+/**
+ * 状态变化回调接口
+ */
+interface StateChangedCallback {
+    fun onStateChanged(state: String)
+}
+
+/**
+ * 错误回调接口
+ */
+interface ErrorCallback {
+    fun onError(error: String)
+}

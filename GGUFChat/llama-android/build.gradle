@@ -1,0 +1,257 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+// 应用统一依赖版本管理 - 引用 shared-dependencies 项目
+// 支持两种构建方式：独立构建（从子项目目录）和 多模块构建（从父项目目录）
+def sharedDepsFile = new File(rootProject.projectDir, 'shared-dependencies/dependencies.gradle')
+if (!sharedDepsFile.exists()) {
+    sharedDepsFile = new File(rootProject.projectDir.parentFile, 'shared-dependencies/dependencies.gradle')
+}
+if (!sharedDepsFile.exists()) {
+    sharedDepsFile = new File(rootProject.projectDir.parentFile.parentFile, 'shared-dependencies/dependencies.gradle')
+}
+apply from: sharedDepsFile
+
+// =============================================================================
+// 构建模式说明
+// =============================================================================
+// 1. Demo 模式（标准库）:
+//    - 命令: ./gradlew :llama-android:assembleDemoRelease
+//    - 用途: Demo 应用直接依赖，依赖通过 Gradle 正常解析
+//    - 输出: llama-android-demo-release.aar
+//
+// 2. UE 模式（Fat-AAR）:
+//    - 命令: ./gradlew :llama-android:assembleUeRelease -PenableFatAar=true
+//    - 用途: Unreal Engine 集成，所有依赖打包到单个 AAR
+//    - 输出: llama-android-ue-release.aar (Fat-AAR)
+//
+// 3. 强制覆盖（可选）:
+//    - -PenableFatAar=true  : 强制所有 flavor 使用 Fat-AAR
+//    - -PenableFatAar=false : 强制所有 flavor 使用标准模式
+// =============================================================================
+
+// =============================================================================
+// Fat-AAR 插件应用
+// =============================================================================
+// 如果通过参数指定了 Fat-AAR 模式，则应用插件
+if (project.hasProperty('enableFatAar') && project.property('enableFatAar') == 'true') {
+    apply plugin: 'com.kezong.fat-aar'
+    println "=== ✅ Fat-AAR 模式已启用（全局） ==="
+} else {
+    println "=== 📦 标准库模式（使用 -PenableFatAar=true 启用 Fat-AAR） ==="
+}
+
+android {
+    compileSdkVersion 34
+
+    defaultConfig {
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles "consumer-rules.pro"
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    // Product Flavors - 不同集成目标的构建变体
+    flavorDimensions 'target'
+    productFlavors {
+        // Demo 集成 - 标准库模式
+        demo {
+            dimension 'target'
+            buildConfigField "boolean", "IS_FAT_AAR", "false"
+        }
+
+        // UE 集成 - Fat-AAR 模式（需要 -PenableFatAar=true）
+        ue {
+            dimension 'target'
+            buildConfigField "boolean", "IS_FAT_AAR", "true"
+        }
+    }
+
+    // 设置 AAR 输出文件名
+    libraryVariants.all { variant ->
+        if (variant.flavorName == 'demo') {
+            // Demo: 简洁命名，不包含 fat 或 ue
+            variant.outputs.all { output ->
+                outputFileName = "llama-android-demo-${variant.buildType.name}.aar"
+            }
+        } else if (variant.flavorName == 'ue') {
+            // UE: 包含 ue 标识
+            variant.outputs.all { output ->
+                outputFileName = "llama-android-ue-${variant.buildType.name}.aar"
+            }
+        }
+    }
+
+    // 注释掉 CMake 配置，因为系统中没有安装 CMake
+    // 如果需要编译 native 代码，请安装 CMake 3.22.1 或更高版本
+    /*
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+    */
+
+    buildTypes {
+        debug {
+            // Keep JNI symbols in debug build
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            consumerProguardFiles 'src/main/consumer-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    buildFeatures {
+        viewBinding false
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir 'src/main/jniLibs'
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    lintOptions {
+        abortOnError false
+    }
+}
+
+// =============================================================================
+// 依赖配置
+// =============================================================================
+
+dependencies {
+    // 检查是否启用 Fat-AAR
+    def useFatAar = project.plugins.hasPlugin('com.kezong.fat-aar')
+
+    // =============================================================================
+    // 公共依赖（所有模块共享，使用统一版本）
+    // =============================================================================
+    if (useFatAar) {
+        // UE 模式：打包公共依赖
+        embed commonDeps.kotlinStdlib
+        embed commonDeps.coreKtx
+        embed commonDeps.lifecycleRuntime
+        embed commonDeps.activityKtx
+        embed commonDeps.coroutinesAndroid
+        embed commonDeps.coroutinesCore
+    } else {
+        // Demo 模式：正常依赖
+        implementation commonDeps.kotlinStdlib
+        implementation commonDeps.coreKtx
+        implementation commonDeps.lifecycleRuntime
+        implementation commonDeps.activityKtx
+        implementation commonDeps.coroutinesAndroid
+        implementation commonDeps.coroutinesCore
+    }
+
+    // =============================================================================
+    // UI 依赖（按需使用）
+    // =============================================================================
+    if (useFatAar) {
+        embed uiDeps.appcompat
+    } else {
+        implementation uiDeps.appcompat
+    }
+
+    // 测试依赖（不打包）
+    testImplementation testDeps.junit
+    androidTestImplementation testDeps.androidxJunit
+    androidTestImplementation testDeps.espresso
+}
+
+// =============================================================================
+// 便捷构建 Tasks
+// =============================================================================
+
+// 构建说明任务
+task printBuildHelp(group: 'help', description: '显示构建说明') {
+    doLast {
+        println """
+╔════════════════════════════════════════════════════════════════╗
+║           GGUF Chat Android Library 构建指南                  ║
+╠════════════════════════════════════════════════════════════════╣
+║  📱 Demo 集成（标准库模式）:                                    ║
+║     ./gradlew :llama-android:assembleDemoRelease              ║
+║     输出: llama-android/build/outputs/aar/llama-android-demo-  ║
+║          release.aar                                           ║
+║                                                                ║
+║  🎮 UE 集成（Fat-AAR 模式）:                                    ║
+║     ./gradlew :llama-android:assembleUeRelease -PenableFatAar=true║
+║     输出: llama-android/build/outputs/aar/llama-android-ue-    ║
+║          release.aar (Fat-AAR)                                 ║
+║                                                                ║
+║  🔧 强制覆盖选项:                                               ║
+║     -PenableFatAar=true   启用 Fat-AAR（打包所有依赖）          ║
+║     -PenableFatAar=false  使用标准模式                         ║
+╚════════════════════════════════════════════════════════════════╝
+        """
+    }
+}
+
+// UE 快捷打包任务
+task packUeFatAar(group: 'build', description: '打包 UE 专用的 Fat-AAR') {
+    doFirst {
+        println "=========================================="
+        println "🎮 开始打包 UE Fat-AAR"
+        println "=========================================="
+    }
+    doLast {
+        println "=========================================="
+        println "✅ UE Fat-AAR 打包完成！"
+        println "📁 输出目录: llama-android/build/outputs/aar/"
+        println "📦 文件名: llama-android-ue-release.aar (Fat-AAR)"
+        println "=========================================="
+    }
+}
+
+// 设置 UE 任务依赖
+packUeFatAar.dependsOn {
+    tasks.find { it.name == 'assembleUeRelease' }
+}
+
+// Demo 快捷打包任务
+task packDemoAar(group: 'build', description: '打包 Demo 用的标准 AAR') {
+    doFirst {
+        println "=========================================="
+        println "📱 开始打包 Demo 标准库 AAR"
+        println "=========================================="
+    }
+    doLast {
+        println "=========================================="
+        println "✅ Demo AAR 打包完成！"
+        println "📁 输出目录: llama-android/build/outputs/aar/"
+        println "📦 文件名: llama-android-demo-release.aar"
+        println "=========================================="
+    }
+}
+
+// 设置 Demo 任务依赖
+packDemoAar.dependsOn {
+    tasks.find { it.name == 'assembleDemoRelease' }
+}

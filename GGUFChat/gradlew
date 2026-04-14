@@ -116,6 +116,45 @@ esac
 
 CLASSPATH="\\\"\\\""
 
+# Auto-download gradle-wrapper.jar if it doesn't exist
+GRADLE_WRAPPER_JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+GRADLE_WRAPPER_URL="https://github.com/gradle/gradle/raw/v7.6.3/gradle/wrapper/gradle-wrapper.jar"
+
+if [ ! -f "$GRADLE_WRAPPER_JAR" ]; then
+    echo "Gradle wrapper JAR not found. Downloading..."
+    echo "From: $GRADLE_WRAPPER_URL"
+    echo "To: $GRADLE_WRAPPER_JAR"
+
+    # Create directory if it doesn't exist
+    mkdir -p "$(dirname "$GRADLE_WRAPPER_JAR")"
+
+    # Try to download using available tools
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$GRADLE_WRAPPER_URL" -o "$GRADLE_WRAPPER_JAR" || {
+            echo "Warning: Failed to download gradle-wrapper.jar with curl"
+            rm -f "$GRADLE_WRAPPER_JAR"
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$GRADLE_WRAPPER_URL" -O "$GRADLE_WRAPPER_JAR" || {
+            echo "Warning: Failed to download gradle-wrapper.jar with wget"
+            rm -f "$GRADLE_WRAPPER_JAR"
+        }
+    else
+        echo "Error: Neither curl nor wget is available. Cannot download gradle-wrapper.jar"
+        echo "Please manually download from: $GRADLE_WRAPPER_URL"
+        die "Gradle wrapper JAR not found"
+    fi
+
+    # Verify download
+    if [ ! -f "$GRADLE_WRAPPER_JAR" ]; then
+        die "Failed to download gradle-wrapper.jar. Please download manually from: $GRADLE_WRAPPER_URL"
+    fi
+
+    echo "Successfully downloaded gradle-wrapper.jar"
+fi
+
+# Add gradle-wrapper.jar to classpath
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then

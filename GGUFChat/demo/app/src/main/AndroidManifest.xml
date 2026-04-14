@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.stdemo.ggufchat.demo">
 
     <!-- 模型存储在内部存储 (filesDir)，不需要存储权限 -->
     <!-- 网络权限（下载模型时需要）-->

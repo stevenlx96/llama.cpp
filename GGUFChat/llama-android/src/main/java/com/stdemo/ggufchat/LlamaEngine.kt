@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,27 +14,25 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * LlamaEngine - GGUF Chat 推理引擎
  *
- * 提供本地 LLM 推理功能，支持 GGUF 格式模型
+ * 提供本地 LLM 推理功能，支持 GGUF 格式模型。
+ *
+ * 这是 `app` 模块 `GGUFChatEngine` 的下游拷贝，额外叠加了一组面向
+ * Java/UE 集成方的便利接口（状态回调、`initialize/sendMessage/release`
+ * 兼容方法、`Context` 构造参数）。`LlamaManagerJava` 是它的 Java 友好包装层。
+ *
+ * `typealias GGUFChatEngine = LlamaEngine` 保留与 app 源码一致的类型名，
+ * 使得 app 的拷贝过来的代码可以原样工作。
  */
 class LlamaEngine(private val context: Context? = null) {
 
     companion object {
         private const val TAG = "LlamaEngine"
-
-        // Native library loading
-        init {
-            try {
-                System.loadLibrary("llama-android")
-                Log.d(TAG, "Successfully loaded llama-android native library")
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Failed to load llama-android native library", e)
-            }
-        }
     }
 
     // Native methods
     private external fun nativeInit(modelPath: String, nThreads: Int): Long
 
+    // Static (non-streaming) completion - returns complete response at once
     private external fun nativeCompletion(
         contextPtr: Long,
         prompt: String,
@@ -43,6 +42,7 @@ class LlamaEngine(private val context: Context? = null) {
         topK: Int
     ): String
 
+    // Streaming completion - calls callback for each token
     private external fun nativeCompletionStreaming(
         contextPtr: Long,
         prompt: String,
@@ -82,8 +82,38 @@ class LlamaEngine(private val context: Context? = null) {
     private val shouldStopGeneration = AtomicBoolean(false)
     private var currentState = EngineState.IDLE
 
-    // Configuration
+    // Configuration and history
+    private val promptBuilder = ChatPromptBuilder()
     private var config = ChatConfig()
+
+    // Whether native library loaded successfully
+    private var nativeLoaded = false
+
+    init {
+        Log.d(TAG, "Initializing LlamaEngine, loading native libraries...")
+        try {
+            // Try to pre-load ONNX Runtime (optional dependency)
+            // If libllama-android.so was built with ONNX support, it needs libonnxruntime.so
+            try {
+                System.loadLibrary("onnxruntime")
+                Log.d(TAG, "Loaded onnxruntime (intent recognition available)")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.i(TAG, "onnxruntime not available (intent recognition disabled)")
+            }
+
+            System.loadLibrary("llama-android")
+            nativeLoaded = true
+            Log.d(TAG, "Successfully loaded llama-android (JNI wrapper)")
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "Failed to load llama-android JNI wrapper", e)
+            nativeLoaded = false
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize native libraries", e)
+            nativeLoaded = false
+        }
+    }
+
+    fun isNativeLoaded(): Boolean = nativeLoaded
 
     // 更新状态并通知回调
     private fun setState(state: EngineState) {
@@ -91,10 +121,13 @@ class LlamaEngine(private val context: Context? = null) {
         onStateChanged?.invoke(state)
     }
 
-    fun isNativeLoaded(): Boolean = true
-
     suspend fun loadModel(path: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            if (!nativeLoaded) {
+                setState(EngineState.ERROR)
+                return@withContext Result.failure(Exception("Native library not loaded. Check logcat for details."))
+            }
+
             setState(EngineState.LOADING)
 
             val file = File(path)
@@ -118,6 +151,7 @@ class LlamaEngine(private val context: Context? = null) {
 
             modelPath = path
             isModelLoaded = true
+            promptBuilder.clearHistory()
             isGenerating.set(false)
             shouldStopGeneration.set(false)
 
@@ -154,7 +188,7 @@ class LlamaEngine(private val context: Context? = null) {
 
             Log.d(TAG, "Generate called, streaming mode: $streamingMode")
 
-            val prompt = userInput // 简化版本，直接使用用户输入
+            val prompt = promptBuilder.buildChatPrompt(config.systemPrompt, userInput)
 
             val response = if (streamingMode) {
                 generateStreaming(prompt, onTokenGenerated)
@@ -163,8 +197,14 @@ class LlamaEngine(private val context: Context? = null) {
             }
 
             Log.d(TAG, "Generated response length: ${response.length}")
+
+            val cleanedResponse = promptBuilder.cleanResponse(response)
+
+            promptBuilder.addToHistory(userInput, cleanedResponse, config.maxHistoryPairs)
+
+            Log.d(TAG, "Generation completed, response length: ${cleanedResponse.length}")
             setState(EngineState.READY)
-            Result.success(response)
+            Result.success(cleanedResponse)
         } catch (e: Exception) {
             Log.e(TAG, "Generation failed with exception", e)
             setState(EngineState.ERROR)
@@ -254,6 +294,13 @@ class LlamaEngine(private val context: Context? = null) {
         Log.d(TAG, "MaxTokens set to: $maxTokens")
     }
 
+    fun setMaxHistoryPairs(maxPairs: Int) {
+        require(maxPairs >= 0) { "MaxHistoryPairs must be >= 0" }
+        config = config.copy(maxHistoryPairs = maxPairs)
+        promptBuilder.setMaxHistoryPairs(maxPairs)
+        Log.d(TAG, "MaxHistoryPairs set to: $maxPairs")
+    }
+
     fun setStreamingMode(enabled: Boolean) {
         streamingMode = enabled
         Log.d(TAG, "Streaming mode set to: $enabled")
@@ -271,13 +318,17 @@ class LlamaEngine(private val context: Context? = null) {
 
     // History management
     fun clearHistory() {
+        promptBuilder.clearHistory()
         Log.d(TAG, "History cleared")
     }
+
+    fun getHistorySize(): Int = promptBuilder.getHistorySize()
 
     // ==================== 兼容方法（用于 UE/Java 集成） ====================
 
     /**
-     * 初始化（兼容方法）
+     * 阻塞式初始化（兼容方法）。Java 调用方使用。
+     * 会从 `getDefaultModelPath` 推断模型路径。
      */
     fun initialize(modelPath: String? = null): Boolean {
         return try {
@@ -311,41 +362,39 @@ class LlamaEngine(private val context: Context? = null) {
     }
 
     /**
-     * 发送消息（兼容方法）
+     * 异步发送消息（兼容方法）。结果通过 [onResponse] 回调投递；
+     * 流式 token 通过 [onResponse] 以 `[TOKEN] $token` 前缀返回，最终完整
+     * 响应不带前缀返回。
      */
     fun sendMessage(message: String) {
         try {
             setState(EngineState.GENERATING)
 
-            // 在后台线程生成响应
-            Handler(Looper.getMainLooper()).post {
-                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        val result = generate(message) { token ->
-                            // 流式 token 回调（如果需要）
-                            Handler(Looper.getMainLooper()).post {
-                                onResponse?.invoke("[TOKEN] $token")
-                            }
+            GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val result = generate(message) { token ->
+                        Handler(Looper.getMainLooper()).post {
+                            onResponse?.invoke("[TOKEN] $token")
                         }
+                    }
 
-                        result.onSuccess { response ->
-                            Handler(Looper.getMainLooper()).post {
-                                setState(EngineState.READY)
-                                onResponse?.invoke(response)
-                            }
+                    result.onSuccess { response ->
+                        Handler(Looper.getMainLooper()).post {
+                            setState(EngineState.READY)
+                            onResponse?.invoke(response)
                         }
+                    }
 
-                        result.onFailure { exception ->
-                            Handler(Looper.getMainLooper()).post {
-                                setState(EngineState.ERROR)
-                                onError?.invoke(exception.message ?: "Generation failed")
-                            }
-                        }
-                    } catch (e: Exception) {
+                    result.onFailure { exception ->
                         Handler(Looper.getMainLooper()).post {
                             setState(EngineState.ERROR)
-                            onError?.invoke(e.message ?: "Generation failed")
+                            onError?.invoke(exception.message ?: "Generation failed")
                         }
+                    }
+                } catch (e: Exception) {
+                    Handler(Looper.getMainLooper()).post {
+                        setState(EngineState.ERROR)
+                        onError?.invoke(e.message ?: "Generation failed")
                     }
                 }
             }
@@ -368,7 +417,7 @@ class LlamaEngine(private val context: Context? = null) {
         )
 
         for (path in possiblePaths) {
-            if (File(path).exists()) {
+            if (path != null && File(path).exists()) {
                 Log.d(TAG, "Found model at: $path")
                 return path
             }
@@ -389,10 +438,13 @@ class LlamaEngine(private val context: Context? = null) {
     fun getState(): EngineState = currentState
 
     /**
-     * 获取对话历史（兼容方法）
+     * 获取对话历史（兼容方法）。返回扁平的字符串列表：
+     * `[user1, assistant1, user2, assistant2, ...]`
      */
     fun getChatHistory(): List<String> {
-        return emptyList()
+        return promptBuilder.getHistoryList().flatMap { (user, assistant) ->
+            listOf(user, assistant)
+        }
     }
 
     /**
@@ -437,10 +489,11 @@ class LlamaEngine(private val context: Context? = null) {
     fun getEngineInfo(): String {
         return buildString {
             append("LlamaEngine Info:\n")
-            append("Native Loaded: true\n")
+            append("Native Loaded: $nativeLoaded\n")
             append("Model Ready: ${isModelReady()}\n")
             append("State: ${currentState.name}\n")
             append("Model Dir: ${getModelDir().absolutePath}\n")
+            append("History Size: ${getHistorySize()}\n")
         }
     }
 
@@ -452,7 +505,7 @@ class LlamaEngine(private val context: Context? = null) {
                 Thread.sleep(100)
             }
 
-            if (contextPtr != 0L) {
+            if (nativeLoaded && contextPtr != 0L) {
                 nativeFree(contextPtr)
                 Log.d(TAG, "Model freed")
             }
@@ -463,6 +516,7 @@ class LlamaEngine(private val context: Context? = null) {
         isModelLoaded = false
         contextPtr = 0
         modelPath = null
+        promptBuilder.clearHistory()
         setState(EngineState.IDLE)
         Log.d(TAG, "Resources released")
     }

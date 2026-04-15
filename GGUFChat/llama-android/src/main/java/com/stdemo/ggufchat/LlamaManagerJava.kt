@@ -74,6 +74,7 @@ class LlamaManagerJava(private val context: Context) {
     private var onResponseCallback: LlamaCallback<String>? = null
     private var onStateChangedCallback: StateChangedCallback? = null
     private var onErrorCallback: ErrorCallback? = null
+    private var onTokenCallback: TokenStreamCallback? = null
 
     // ==================== 初始化方法 ====================
 
@@ -161,6 +162,16 @@ class LlamaManagerJava(private val context: Context) {
         this.onErrorCallback = callback
     }
 
+    /**
+     * 设置流式 token 回调（每个 token 一次）。
+     *
+     * 注意：[setOnResponse] 是「最终完整响应」回调，本回调是「流式逐 token」回调。
+     * 同时设置时，token 通过本回调投递；最终响应通过 [setOnResponse] 投递。
+     */
+    fun setOnToken(callback: TokenStreamCallback?) {
+        this.onTokenCallback = callback
+    }
+
     // ==================== 消息发送方法 ====================
 
     /**
@@ -222,11 +233,11 @@ class LlamaManagerJava(private val context: Context) {
     // ==================== 配置方法 ====================
 
     /**
-     * 设置生成配置
+     * 设置生成配置（一次设置温度、最大 token、TopP 三个参数）
      *
-     * @param temperature 温度参数 (0.0-1.0)
-     * @param maxTokens 最大生成 token 数
-     * @param topP Top-p 采样参数
+     * @param temperature 温度参数 (>= 0)
+     * @param maxTokens 最大生成 token 数 (> 0)
+     * @param topP Top-p 采样参数 (0.0 - 1.0)
      */
     fun setGenerationConfig(
         temperature: Float,
@@ -237,6 +248,39 @@ class LlamaManagerJava(private val context: Context) {
         Log.d(TAG, "Generation config updated")
     }
 
+    /** 单独设置温度 */
+    fun setTemperature(temperature: Float) {
+        engine.setTemperature(temperature)
+    }
+
+    /** 单独设置 TopP */
+    fun setTopP(topP: Float) {
+        engine.setTopP(topP)
+    }
+
+    /** 单独设置 TopK */
+    fun setTopK(topK: Int) {
+        engine.setTopK(topK)
+    }
+
+    /** 单独设置最大生成 token 数 */
+    fun setMaxTokens(maxTokens: Int) {
+        engine.setMaxTokens(maxTokens)
+    }
+
+    /** 设置最大保留对话历史轮数（0 表示不保留） */
+    fun setMaxHistoryPairs(maxPairs: Int) {
+        engine.setMaxHistoryPairs(maxPairs)
+    }
+
+    /** 启用/禁用流式生成模式 */
+    fun setStreamingMode(enabled: Boolean) {
+        engine.setStreamingMode(enabled)
+    }
+
+    /** 是否启用了流式生成模式 */
+    fun isStreamingModeEnabled(): Boolean = engine.isStreamingModeEnabled()
+
     /**
      * 设置系统提示词
      *
@@ -246,6 +290,25 @@ class LlamaManagerJava(private val context: Context) {
         engine.setSystemPrompt(systemPrompt)
         Log.d(TAG, "System prompt updated")
     }
+
+    /** 获取当前完整配置（temperature, topP, topK, maxTokens, maxHistoryPairs, systemPrompt） */
+    fun getConfig(): ChatConfig = engine.getConfig()
+
+    /** 整体替换配置 */
+    fun setConfig(newConfig: ChatConfig) {
+        engine.setConfig(newConfig)
+    }
+
+    /** 清除对话历史（不释放模型） */
+    fun clearHistory() {
+        engine.clearHistory()
+    }
+
+    /** 当前对话历史的轮数 */
+    fun getHistorySize(): Int = engine.getHistorySize()
+
+    /** 获取模型加载信息（已加载模型的文件名 / 未加载提示） */
+    fun getModelInfo(): String = engine.getModelInfo()
 
     // ==================== 状态查询方法 ====================
 
@@ -313,13 +376,20 @@ class LlamaManagerJava(private val context: Context) {
     // ==================== 内部回调设置 ====================
 
     private fun setupInternalCallbacks() {
-        // 响应回调
+        // 响应回调 — 兼容 LlamaEngine.sendMessage() 现有契约：流式 token
+        // 以 "[TOKEN] " 前缀通过 onResponse 回调投递，最终响应不带前缀。
+        // 在 Java 层将两者拆开，token 走 TokenStreamCallback，最终响应走 LlamaCallback。
         engine.onResponse = object : (String) -> Unit {
             override fun invoke(text: String) {
                 mainHandler.post(object : Runnable {
                     override fun run() {
                         try {
-                            onResponseCallback?.onSuccess(text)
+                            if (text.startsWith("[TOKEN] ")) {
+                                val token = text.removePrefix("[TOKEN] ")
+                                onTokenCallback?.onToken(token)
+                            } else {
+                                onResponseCallback?.onSuccess(text)
+                            }
                         } catch (e: Exception) {
                             Log.e(TAG, "Error in response callback", e)
                         }
@@ -382,4 +452,11 @@ interface StateChangedCallback {
  */
 interface ErrorCallback {
     fun onError(error: String)
+}
+
+/**
+ * 流式 token 回调接口（每个 token 一次）
+ */
+interface TokenStreamCallback {
+    fun onToken(token: String)
 }

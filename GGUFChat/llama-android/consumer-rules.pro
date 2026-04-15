@@ -14,11 +14,19 @@
 -keep class com.stdemo.ggufchat.LlamaEngine$* { *; }
 -keep class com.stdemo.ggufchat.LlamaHelper { *; }
 -keep class com.stdemo.ggufchat.LlamaManagerJava { *; }
+-keep class com.stdemo.ggufchat.ChatConfig { *; }
+-keep class com.stdemo.ggufchat.LlamaCallback { *; }
+-keep class com.stdemo.ggufchat.StateChangedCallback { *; }
+-keep class com.stdemo.ggufchat.ErrorCallback { *; }
+-keep class com.stdemo.ggufchat.TokenStreamCallback { *; }
+-keep interface com.stdemo.ggufchat.LlamaCallback { *; }
+-keep interface com.stdemo.ggufchat.StateChangedCallback { *; }
+-keep interface com.stdemo.ggufchat.ErrorCallback { *; }
+-keep interface com.stdemo.ggufchat.TokenStreamCallback { *; }
 -keep class com.stdemo.ggufchat.ModelDownloader { *; }
 -keep class com.stdemo.ggufchat.ModelManager { *; }
 -keep class com.stdemo.ggufchat.ModelConfig { *; }
 -keep class com.stdemo.ggufchat.Message { *; }
--keep class com.stdemo.ggufchat.ChatPromptBuilder { *; }
 -keep class com.stdemo.ggufchat.PersistentStorageHelper { *; }
 
 # Intent recognition (optional feature — ONNX runtime)
